@@ -130,9 +130,7 @@ mod tests {
 
     #[test]
     fn chained_with_methods() {
-        let state = TestState::new()
-            .with_counter(100)
-            .with_active(true);
+        let state = TestState::new().with_counter(100).with_active(true);
 
         assert_eq!(state.counter, 100);
         assert!(state.active);

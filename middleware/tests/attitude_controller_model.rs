@@ -13,7 +13,10 @@
 // float_cmp: only generated constants are compared with the YAML literals they
 // were emitted from, which are exact by construction.
 // test code: a panic is a test failure, which is the intended reporting mechanism
-#![cfg_attr(test, allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::float_cmp))]
+#![cfg_attr(
+    test,
+    allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::float_cmp)
+)]
 
 use core::cell::{Cell, RefCell};
 
@@ -111,7 +114,9 @@ impl<M> core::fmt::Debug for TestInput<M> {
 
 impl<M> Default for TestInput<M> {
     fn default() -> Self {
-        Self { pending: Cell::new(None) }
+        Self {
+            pending: Cell::new(None),
+        }
     }
 }
 
@@ -145,7 +150,9 @@ impl<M: PortMessage> OutputPort<M> for TestOutput {
     }
     fn send(&self, message: M) -> Result<(), SendError> {
         let mut buffer = [0u8; 64];
-        let len = message.serialize(&mut buffer).map_err(|_| SendError::SerializationFailed)?;
+        let len = message
+            .serialize(&mut buffer)
+            .map_err(|_| SendError::SerializationFailed)?;
         *self.last.borrow_mut() = buffer[..len].to_vec();
         Ok(())
     }
@@ -167,6 +174,7 @@ fn ready_controller(hooks: &mut Hooks) -> Controller {
 
 /// REQ-GEN-011: a component struct with typed ports, state and commands exists
 /// and implements the runtime `Component` trait.
+/// Verifies: REQ-GEN-004, REQ-GEN-010, REQ-GEN-011
 #[test]
 fn test_example_component_struct_with_ports() {
     assert_eq!(Controller::NAME, "AttitudeController");
@@ -176,11 +184,21 @@ fn test_example_component_struct_with_ports() {
     assert_eq!(Controller::PORT_COUNT, 4);
     assert_eq!(
         Controller::PORT_NAMES,
-        ["attitude_input", "setpoint_input", "control_output", "telemetry_output"]
+        [
+            "attitude_input",
+            "setpoint_input",
+            "control_output",
+            "telemetry_output"
+        ]
     );
     assert_eq!(
         Controller::PORT_DIRECTIONS,
-        [PortDirection::Input, PortDirection::Input, PortDirection::Output, PortDirection::Output]
+        [
+            PortDirection::Input,
+            PortDirection::Input,
+            PortDirection::Output,
+            PortDirection::Output
+        ]
     );
     assert_eq!(Controller::PORT_MESSAGE_TYPES[3], "TelemetryData");
     assert_eq!(Controller::TRACES, ["REQ-ATT-001", "REQ-ATT-002"]);
@@ -201,14 +219,23 @@ fn test_example_component_struct_with_ports() {
         control_output: TestOutput::default(),
         telemetry_output: TestOutput::default(),
     };
-    let measurement = AttitudeMeasurement { roll: 0.1, pitch: -0.2, yaw: 0.3, timestamp_ms: 42 };
+    let measurement = AttitudeMeasurement {
+        roll: 0.1,
+        pitch: -0.2,
+        yaw: 0.3,
+        timestamp_ms: 42,
+    };
     ports.attitude_input.pending.set(Some(measurement));
 
     let controller = Controller::with_ports(AttitudeControllerConfig::default(), ports);
     assert_eq!(controller.state().current, Fsm::INITIAL_STATE);
     assert_eq!(controller.ports().attitude_input.take(), Some(measurement));
 
-    let output = ControlOutput { roll_output: 0.5, pitch_output: -0.5, yaw_output: 0.0 };
+    let output = ControlOutput {
+        roll_output: 0.5,
+        pitch_output: -0.5,
+        yaw_output: 0.0,
+    };
     controller.ports().control_output.send(output).unwrap();
     let bytes = controller.ports().control_output.last.borrow().clone();
     assert_eq!(bytes.len(), ControlOutput::WIRE_SIZE);
@@ -216,15 +243,24 @@ fn test_example_component_struct_with_ports() {
 }
 
 /// REQ-GEN-011: generated `PortMessage` impls round-trip and reject bad input.
+/// Verifies: REQ-GEN-011
 #[test]
 fn test_example_port_message_roundtrip() {
-    let telemetry = TelemetryData { mode: 2, state: 3, pitch_error: 0.125, timestamp_ms: 9_000 };
+    let telemetry = TelemetryData {
+        mode: 2,
+        state: 3,
+        pitch_error: 0.125,
+        timestamp_ms: 9_000,
+    };
     let mut buffer = [0u8; 32];
     let len = telemetry.serialize(&mut buffer).unwrap();
     assert_eq!(len, TelemetryData::WIRE_SIZE);
     assert_eq!(len, 1 + 1 + 4 + 8);
     assert_eq!(TelemetryData::max_size(), len);
-    assert_eq!(TelemetryData::deserialize(&buffer[..len]).unwrap(), telemetry);
+    assert_eq!(
+        TelemetryData::deserialize(&buffer[..len]).unwrap(),
+        telemetry
+    );
 
     let mut small = [0u8; 4];
     assert_eq!(
@@ -238,6 +274,7 @@ fn test_example_port_message_roundtrip() {
 }
 
 /// REQ-FSM-011: with `sensors_calibrated` false, Start leaves the component in Ready.
+/// Verifies: REQ-FSM-011, REQ-FSM-024
 #[test]
 fn test_example_guard_false_blocks_start() {
     let mut hooks = Hooks::default();
@@ -253,15 +290,22 @@ fn test_example_guard_false_blocks_start() {
     let (controller, outcome) = controller.handle(SystemEvent::Start, &mut hooks).unwrap();
     assert_eq!(
         outcome,
-        Fsm::Outcome::Transitioned { from: SystemState::Ready, to: SystemState::Active }
+        Fsm::Outcome::Transitioned {
+            from: SystemState::Ready,
+            to: SystemState::Active
+        }
     );
     assert_eq!(controller.state().current, SystemState::Active);
 }
 
 /// REQ-FSM-002, REQ-FSM-012: exit, transition action and enter run in order.
+/// Verifies: REQ-FSM-002, REQ-FSM-012
 #[test]
 fn test_example_actions_enter_exit_order() {
-    let mut hooks = Hooks { calibrated: true, ..Hooks::default() };
+    let mut hooks = Hooks {
+        calibrated: true,
+        ..Hooks::default()
+    };
     let controller = ready_controller(&mut hooks);
     assert_eq!(hooks.calls, vec![Call::PrepareControlLoop]);
     hooks.calls.clear();
@@ -273,43 +317,65 @@ fn test_example_actions_enter_exit_order() {
     let (controller, _) = controller.handle(SystemEvent::Stop, &mut hooks).unwrap();
     assert_eq!(
         hooks.calls,
-        vec![Call::DisableControl, Call::DisarmActuators, Call::PrepareControlLoop]
+        vec![
+            Call::DisableControl,
+            Call::DisarmActuators,
+            Call::PrepareControlLoop
+        ]
     );
     assert_eq!(controller.state().current, SystemState::Ready);
     assert!(!hooks.calls.contains(&Call::InitializeSensors));
 }
 
 /// REQ-FSM-011: Fault is left only once `fault_resolved` holds.
+/// Verifies: REQ-FSM-011
 #[test]
 fn test_example_fault_recovery_guard() {
-    let mut hooks = Hooks { calibrated: true, ..Hooks::default() };
+    let mut hooks = Hooks {
+        calibrated: true,
+        ..Hooks::default()
+    };
     let controller = ready_controller(&mut hooks);
     let (controller, _) = controller.handle(SystemEvent::Start, &mut hooks).unwrap();
-    let (controller, _) = controller.handle(SystemEvent::FaultDetected, &mut hooks).unwrap();
+    let (controller, _) = controller
+        .handle(SystemEvent::FaultDetected, &mut hooks)
+        .unwrap();
     assert_eq!(controller.state().current, SystemState::Fault);
     assert_eq!(hooks.calls.last(), Some(&Call::LogFault));
 
-    let (controller, outcome) = controller.handle(SystemEvent::FaultCleared, &mut hooks).unwrap();
+    let (controller, outcome) = controller
+        .handle(SystemEvent::FaultCleared, &mut hooks)
+        .unwrap();
     assert_eq!(outcome, Fsm::Outcome::Remained);
     assert_eq!(controller.state().current, SystemState::Fault);
 
     hooks.fault_resolved = true;
-    let (controller, _) = controller.handle(SystemEvent::FaultCleared, &mut hooks).unwrap();
+    let (controller, _) = controller
+        .handle(SystemEvent::FaultCleared, &mut hooks)
+        .unwrap();
     assert_eq!(controller.state().current, SystemState::Ready);
 }
 
 /// A failing hook returns the component unchanged together with the error.
+/// Verifies: REQ-GEN-011, REQ-FSM-012
 #[test]
 fn test_example_hook_failure_keeps_component_state() {
-    let mut hooks = Hooks { calibrated: true, fail_on: Some(Call::ArmActuators), ..Hooks::default() };
+    let mut hooks = Hooks {
+        calibrated: true,
+        fail_on: Some(Call::ArmActuators),
+        ..Hooks::default()
+    };
     let controller = ready_controller(&mut hooks);
 
-    let (controller, error) = controller.handle(SystemEvent::Start, &mut hooks).unwrap_err();
+    let (controller, error) = controller
+        .handle(SystemEvent::Start, &mut hooks)
+        .unwrap_err();
     assert_eq!(error, Fsm::StepError::ActionFailed(Call::ArmActuators));
     assert_eq!(controller.state().current, SystemState::Ready);
 }
 
 /// Events without a matching transition are ignored.
+/// Verifies: REQ-FSM-024
 #[test]
 fn test_example_unmatched_event_ignored() {
     let mut hooks = Hooks::default();
@@ -320,6 +386,7 @@ fn test_example_unmatched_event_ignored() {
 }
 
 /// PID blocks carry both integral limits from the model.
+/// Verifies: REQ-GEN-003
 #[test]
 fn test_example_pid_integral_limits() {
     assert_eq!(attitude_control::PITCH_PID::INTEGRAL_MIN, -0.5);

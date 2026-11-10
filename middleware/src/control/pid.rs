@@ -116,6 +116,16 @@ impl Default for PidState {
 /// is no previous measurement, so the derivative term is zero for that
 /// sample.
 ///
+/// # Errors
+/// `update` returns, in this order of checking:
+/// - `InvalidInput` if the setpoint or measurement is not finite;
+/// - `InvalidDelta` if `dt` is zero, negative, NaN or infinite;
+/// - `InvalidConfig` if `output_min > output_max`, `integral_max < 0`, or
+///   any of these limits is NaN;
+/// - `NumericalError` if the unclamped integral or the unsaturated output is
+///   not finite (overflow, or a NaN gain). Overflow is reported before
+///   clamping, so it is never masked by the anti-windup or output limits.
+///
 /// # Examples
 ///
 /// ```
@@ -125,7 +135,7 @@ impl Default for PidState {
 ///     .gains(2.0, 0.5, 0.1)
 ///     .limits(-100.0, 100.0, 50.0)
 ///     .build()
-///     .expect("gains and limits are both set");
+///     .expect("gains and limits are set and valid");
 ///
 /// let setpoint = 100.0;
 /// let measurement = 95.0;
@@ -198,16 +208,22 @@ impl ControlBlock for PidController {
             return Err(ControlError::InvalidDelta);
         }
 
+        // Validate limits: `f32::clamp` panics when `min > max` or a bound is
+        // NaN, so reject such configurations before clamping. The builder
+        // already rejects them; this repeats the check as defence in depth
+        // for controllers made with `PidController::new`.
+        validate_limits(&self.limits)?;
+
         // Compute error
         let error = setpoint - measurement;
 
-        // Proportional term
-        let p_term = self.gains.kp * error;
-
-        // Integral term with anti-windup
+        // Integral with anti-windup. The unclamped sum is checked first so
+        // that an overflow is reported rather than hidden by the clamp.
         let integral = self.state.integral + error * dt;
+        if !integral.is_finite() {
+            return Err(ControlError::NumericalError);
+        }
         let integral = integral.clamp(-self.limits.integral_max, self.limits.integral_max);
-        let i_term = self.gains.ki * integral;
 
         // Derivative term (on measurement to avoid setpoint kick). With no
         // previous sample there is no rate to estimate, so it is zero.
@@ -215,18 +231,18 @@ impl ControlBlock for PidController {
             Some(prev) => (measurement - prev) / dt,
             None => 0.0,
         };
-        let d_term = -self.gains.kd * derivative; // Negative because we're using derivative of measurement
 
-        // Compute output
-        let output = p_term + i_term + d_term;
-
-        // Saturate output
-        let output = output.clamp(self.limits.output_min, self.limits.output_max);
-
-        // Check for numerical errors
+        // Unsaturated output. Negative D because we use the derivative of
+        // the measurement. Checked before saturation so that an overflow (or
+        // a NaN gain) is reported rather than clamped to a finite limit.
+        let output = self.gains.kp * error + self.gains.ki * integral - self.gains.kd * derivative;
         if !output.is_finite() {
             return Err(ControlError::NumericalError);
         }
+
+        // Saturate output. A finite value clamped to ordered, non-NaN
+        // bounds is finite, so no further check is needed.
+        let output = output.clamp(self.limits.output_min, self.limits.output_max);
 
         // Create new state
         let new_state = PidState {
@@ -254,23 +270,51 @@ impl ControlBlock for PidController {
     }
 }
 
+/// Checks that `limits` can be applied by `f32::clamp` without panicking.
+///
+/// Infinite bounds are valid (they mean "unlimited").
+///
+/// # Errors
+/// [`ControlError::InvalidConfig`] if any bound is NaN, if
+/// `output_min > output_max`, or if `integral_max < 0`.
+fn validate_limits(limits: &PidLimits) -> Result<(), ControlError> {
+    if limits.output_min.is_nan()
+        || limits.output_max.is_nan()
+        || limits.integral_max.is_nan()
+        || limits.output_min > limits.output_max
+        || limits.integral_max < 0.0
+    {
+        Err(ControlError::InvalidConfig)
+    } else {
+        Ok(())
+    }
+}
+
 /// Builder for PID controllers.
 ///
 /// # Examples
 ///
 /// ```
-/// use middleware::control::{PidControllerBuilder, PidGains, PidLimits};
+/// use middleware::control::{ControlError, PidControllerBuilder, PidGains, PidLimits};
 ///
 /// let pid = PidControllerBuilder::new()
 ///     .gains(2.0, 0.5, 0.1)
 ///     .limits(-100.0, 100.0, 50.0)
-///     .build()
-///     .expect("gains and limits are both set");
+///     .build()?;
 /// assert_eq!(pid.gains(), PidGains::new(2.0, 0.5, 0.1));
 /// assert_eq!(pid.limits(), PidLimits::new(-100.0, 100.0, 50.0));
 ///
-/// // `build` returns `None` until both gains and limits are supplied.
-/// assert!(PidControllerBuilder::new().gains(2.0, 0.5, 0.1).build().is_none());
+/// // `build` fails until both gains and limits are supplied...
+/// assert_eq!(
+///     PidControllerBuilder::new().gains(2.0, 0.5, 0.1).build(),
+///     Err(ControlError::InvalidConfig)
+/// );
+/// // ...and when the limits cannot be applied.
+/// assert_eq!(
+///     PidControllerBuilder::new().gains(2.0, 0.5, 0.1).limits(1.0, -1.0, 5.0).build(),
+///     Err(ControlError::InvalidConfig)
+/// );
+/// # Ok::<(), ControlError>(())
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct PidControllerBuilder {
@@ -311,12 +355,20 @@ impl PidControllerBuilder {
 
     /// Builds the PID controller.
     ///
-    /// # Returns
-    /// A new PID controller, or None if gains or limits were not set
-    pub fn build(self) -> Option<PidController> {
-        let gains = self.gains?;
-        let limits = self.limits?;
-        Some(PidController::new(gains, limits))
+    /// The limits are validated with the same rule that `update` applies, so
+    /// an unusable configuration is caught at construction rather than on
+    /// the first update. Gains are not validated: a NaN gain is reported by
+    /// `update` as `NumericalError`.
+    ///
+    /// # Errors
+    /// [`ControlError::InvalidConfig`] if gains or limits were not set, if
+    /// any limit is NaN, if `output_min > output_max`, or if
+    /// `integral_max < 0`.
+    pub fn build(self) -> Result<PidController, ControlError> {
+        let gains = self.gains.ok_or(ControlError::InvalidConfig)?;
+        let limits = self.limits.ok_or(ControlError::InvalidConfig)?;
+        validate_limits(&limits)?;
+        Ok(PidController::new(gains, limits))
     }
 }
 
@@ -331,8 +383,18 @@ impl Default for PidControllerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::block::fault_vectors::{BAD_DT, NON_FINITE, TINY_DT};
     use crate::test_support::assert_close;
 
+    fn pid(kp: f32, ki: f32, kd: f32, limits: PidLimits) -> PidController {
+        PidController::new(PidGains::new(kp, ki, kd), limits)
+    }
+
+    fn wide() -> PidLimits {
+        PidLimits::new(-100.0, 100.0, 50.0)
+    }
+
+    /// Verifies: REQ-CTL-010
     #[test]
     fn test_pid_gains_new() {
         let gains = PidGains::new(1.0, 2.0, 3.0);
@@ -357,6 +419,7 @@ mod tests {
         assert_eq!(state.prev_measurement, None);
     }
 
+    /// Verifies: REQ-CTL-010
     #[test]
     fn test_pid_controller_new() {
         let gains = PidGains::new(1.0, 0.5, 0.1);
@@ -368,6 +431,7 @@ mod tests {
         assert_eq!(pid.state(), PidState::new());
     }
 
+    /// Verifies: REQ-CTL-010
     #[test]
     fn test_pid_proportional_only() {
         let gains = PidGains::new(2.0, 0.0, 0.0);
@@ -383,6 +447,7 @@ mod tests {
         assert_close(output, 10.0);
     }
 
+    /// Verifies: REQ-CTL-010
     #[test]
     fn test_pid_integral_accumulation() {
         let gains = PidGains::new(0.0, 1.0, 0.0);
@@ -402,6 +467,7 @@ mod tests {
         assert_close(output, 2.0);
     }
 
+    /// Verifies: REQ-CTL-011
     #[test]
     fn test_pid_integral_clamping() {
         let gains = PidGains::new(0.0, 1.0, 0.0);
@@ -418,6 +484,7 @@ mod tests {
         assert_eq!(pid.state().integral, 5.0);
     }
 
+    /// Verifies: REQ-CTL-012
     #[test]
     fn test_pid_output_saturation() {
         let gains = PidGains::new(10.0, 0.0, 0.0);
@@ -433,6 +500,7 @@ mod tests {
         assert_eq!(output, 50.0);
     }
 
+    /// Verifies: REQ-CTL-010, REQ-CTL-013
     #[test]
     fn test_pid_derivative_on_measurement() {
         let gains = PidGains::new(0.0, 0.0, 1.0);
@@ -456,6 +524,7 @@ mod tests {
 
     /// REQ-CTL-013: the first update has no previous sample, so it must not
     /// produce a derivative kick. Output equals the P+I contribution.
+    /// Verifies: REQ-CTL-013
     #[test]
     fn test_pid_first_update_has_no_derivative_kick() {
         let gains = PidGains::new(2.0, 0.5, 0.1);
@@ -467,10 +536,14 @@ mod tests {
 
         // error = 5.0; P = 2.0 * 5.0 = 10.0; integral = 5.0 * 0.01 = 0.05;
         // I = 0.5 * 0.05 = 0.025; D = 0 (no previous sample).
-        assert!(output > 0.0, "first output must not kick negative: {output}");
+        assert!(
+            output > 0.0,
+            "first output must not kick negative: {output}"
+        );
         assert!((output - 10.025).abs() < 1e-4, "output = {output}");
     }
 
+    /// Verifies: REQ-CTL-002, REQ-CTL-013
     #[test]
     fn test_pid_reset() {
         let gains = PidGains::new(1.0, 1.0, 1.0);
@@ -492,6 +565,7 @@ mod tests {
         assert!((output - 11.0).abs() < 1e-4, "output = {output}");
     }
 
+    /// Verifies: REQ-CTL-004
     #[test]
     fn test_pid_invalid_inputs() {
         let gains = PidGains::new(1.0, 0.5, 0.1);
@@ -516,6 +590,7 @@ mod tests {
         );
     }
 
+    /// Verifies: REQ-CTL-014
     #[test]
     fn test_pid_builder() {
         let pid = PidControllerBuilder::new()
@@ -532,14 +607,292 @@ mod tests {
         assert_eq!(pid.limits().integral_max, 50.0);
     }
 
+    /// Error class "missing configuration": a builder with no gains, no
+    /// limits, or neither is rejected with `InvalidConfig` (no panic).
+    /// Verifies: REQ-CTL-014, REQ-PLT-010, REQ-CTL-005
     #[test]
     fn test_pid_builder_incomplete() {
         let pid = PidControllerBuilder::new().gains(1.0, 0.5, 0.1).build();
-        assert!(pid.is_none());
+        assert_eq!(pid, Err(ControlError::InvalidConfig));
 
         let pid = PidControllerBuilder::new()
             .limits(-100.0, 100.0, 50.0)
             .build();
-        assert!(pid.is_none());
+        assert_eq!(pid, Err(ControlError::InvalidConfig));
+
+        assert_eq!(
+            PidControllerBuilder::new().build(),
+            Err(ControlError::InvalidConfig)
+        );
+    }
+
+    /// Every invalid limit class (misordered output limits, NaN in each
+    /// bound, negative integral bound, including the smallest negative
+    /// value) is rejected by the builder with `InvalidConfig`, so the
+    /// controller cannot be constructed. Boundary limits (equal output
+    /// limits, zero and infinite bounds) build successfully.
+    /// Verifies: REQ-CTL-014, REQ-PLT-010, REQ-CTL-005
+    #[test]
+    fn test_pid_builder_rejects_invalid_limits() {
+        for (min, max, imax) in [
+            (1.0, -1.0, 10.0),
+            (1.0_f32.next_up(), 1.0, 10.0),
+            (f32::INFINITY, f32::NEG_INFINITY, 10.0),
+            (f32::NAN, 1.0, 10.0),
+            (-1.0, f32::NAN, 10.0),
+            (-1.0, 1.0, f32::NAN),
+            (-1.0, 1.0, -0.5),
+            (-1.0, 1.0, -f32::from_bits(1)),
+            (-1.0, 1.0, f32::NEG_INFINITY),
+        ] {
+            let built = PidControllerBuilder::new()
+                .gains(1.0, 1.0, 0.0)
+                .limits(min, max, imax)
+                .build();
+            assert_eq!(
+                built,
+                Err(ControlError::InvalidConfig),
+                "({min}, {max}, {imax})"
+            );
+        }
+        for (min, max, imax) in [
+            (3.0, 3.0, 0.0),
+            (-1.0, 1.0, -0.0),
+            (f32::NEG_INFINITY, f32::INFINITY, f32::INFINITY),
+        ] {
+            let built = PidControllerBuilder::new()
+                .gains(1.0, 1.0, 0.0)
+                .limits(min, max, imax)
+                .build()
+                .unwrap();
+            assert_eq!(built.limits(), PidLimits::new(min, max, imax));
+        }
+    }
+
+    /// Every non-finite setpoint and measurement is rejected with
+    /// `InvalidInput`, also on a controller that already has a previous
+    /// sample.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_pid_rejects_every_non_finite_input() {
+        let fresh = pid(1.0, 0.5, 0.1, wide());
+        let (primed, _) = fresh.update((1.0, 0.0), 0.01).unwrap();
+        for c in [fresh, primed] {
+            for bad in NON_FINITE {
+                assert_eq!(c.update((bad, 0.0), 0.01), Err(ControlError::InvalidInput));
+                assert_eq!(c.update((0.0, bad), 0.01), Err(ControlError::InvalidInput));
+            }
+        }
+    }
+
+    /// Every zero, negative or non-finite time step is rejected with
+    /// `InvalidDelta`; the smallest positive normal step is accepted.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_pid_rejects_every_invalid_dt() {
+        let c = pid(1.0, 0.5, 0.0, wide());
+        for dt in BAD_DT {
+            assert_eq!(
+                c.update((1.0, 0.0), dt),
+                Err(ControlError::InvalidDelta),
+                "dt = {dt}"
+            );
+        }
+        let (_, out) = c.update((1.0, 0.0), TINY_DT).unwrap();
+        assert_close(out, 1.0);
+    }
+
+    /// A non-finite input is reported before an invalid dt.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_pid_input_checked_before_dt() {
+        let c = pid(1.0, 0.0, 0.0, wide());
+        assert_eq!(
+            c.update((f32::NAN, 0.0), 0.0),
+            Err(ControlError::InvalidInput)
+        );
+    }
+
+    /// Overflow of the proportional term is reported as `NumericalError`
+    /// even though output saturation would otherwise clamp it to a finite
+    /// limit.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_pid_proportional_overflow_is_numerical_error() {
+        let c = pid(1.0e30, 0.0, 0.0, wide());
+        assert_eq!(
+            c.update((1.0e30, 0.0), 0.01),
+            Err(ControlError::NumericalError)
+        );
+    }
+
+    /// The error itself overflows (MAX - (-MAX)); the unclamped integral is
+    /// infinite, which is reported rather than clamped to `integral_max`.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_pid_integral_overflow_is_numerical_error() {
+        let c = pid(0.0, 1.0, 0.0, wide());
+        assert_eq!(
+            c.update((f32::MAX, -f32::MAX), 0.01),
+            Err(ControlError::NumericalError)
+        );
+        // error finite but error * dt overflows
+        assert_eq!(
+            c.update((1.0e30, 0.0), 1.0e30),
+            Err(ControlError::NumericalError)
+        );
+    }
+
+    /// A measurement jump over a tiny dt overflows the derivative term.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_pid_derivative_overflow_is_numerical_error() {
+        let c = pid(0.0, 0.0, 1.0, wide());
+        let (c, _) = c.update((0.0, -1.0e30), 1.0).unwrap();
+        assert_eq!(
+            c.update((0.0, 1.0e30), TINY_DT),
+            Err(ControlError::NumericalError)
+        );
+    }
+
+    /// A NaN gain makes the output NaN, which is reported.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_pid_nan_gain_is_numerical_error() {
+        for g in [
+            PidGains::new(f32::NAN, 0.0, 0.0),
+            PidGains::new(0.0, f32::NAN, 0.0),
+            PidGains::new(0.0, 0.0, f32::NAN),
+        ] {
+            // kd NaN on the first sample multiplies a zero derivative:
+            // NaN * 0 is NaN, so every case fails on the first update.
+            let c = PidController::new(g, wide());
+            assert_eq!(
+                c.update((1.0, 0.0), 0.1).map(|_| ()),
+                Err(ControlError::NumericalError),
+                "{g:?}"
+            );
+        }
+    }
+
+    /// Limits that `f32::clamp` would panic on are rejected with
+    /// `InvalidConfig` instead (fault injection on the configuration). This
+    /// covers controllers made with `PidController::new`, which bypasses the
+    /// builder's validation.
+    /// Verifies: REQ-CTL-005
+    #[test]
+    fn test_pid_invalid_limits_are_rejected() {
+        for limits in [
+            PidLimits::new(1.0, -1.0, 10.0),
+            PidLimits::new(f32::NAN, 1.0, 10.0),
+            PidLimits::new(-1.0, f32::NAN, 10.0),
+            PidLimits::new(-1.0, 1.0, -0.5),
+            PidLimits::new(-1.0, 1.0, f32::NAN),
+        ] {
+            let c = pid(1.0, 1.0, 0.0, limits);
+            assert_eq!(
+                c.update((1.0, 0.0), 0.1),
+                Err(ControlError::InvalidConfig),
+                "{limits:?}"
+            );
+        }
+    }
+
+    /// Boundary configurations are valid: equal output limits pin the
+    /// output, a zero integral bound disables the integral, and infinite
+    /// bounds mean "unlimited".
+    /// Verifies: REQ-CTL-011, REQ-CTL-012
+    #[test]
+    fn test_pid_boundary_limits_are_valid() {
+        let c = pid(1.0, 1.0, 0.0, PidLimits::new(3.0, 3.0, 0.0));
+        let (c, out) = c.update((10.0, 0.0), 0.1).unwrap();
+        assert_eq!(out, 3.0);
+        assert_eq!(c.state().integral, 0.0);
+
+        let inf = PidLimits::new(f32::NEG_INFINITY, f32::INFINITY, f32::INFINITY);
+        let c = pid(2.0, 0.0, 0.0, inf);
+        let (_, out) = c.update((1.0e20, 0.0), 0.1).unwrap();
+        assert_close(out, 2.0e20);
+    }
+
+    /// Under sustained positive error the integral rises to exactly
+    /// `integral_max` and stays there; when the error reverses it recovers
+    /// immediately from the clamp (no wound-up excess to unwind), and it
+    /// clamps at exactly `-integral_max` on the negative side. All values
+    /// are exactly representable, so they are compared with `==`.
+    /// Verifies: REQ-CTL-011
+    #[test]
+    fn test_pid_anti_windup_sustained_error_and_recovery() {
+        let mut c = pid(0.0, 1.0, 0.0, PidLimits::new(-100.0, 100.0, 5.0));
+        // error 4.0, dt 0.5: integral steps 2, 4, then clamps at 5.
+        let expected = [2.0, 4.0, 5.0];
+        for e in expected {
+            let (n, out) = c.update((4.0, 0.0), 0.5).unwrap();
+            assert_eq!(n.state().integral, e);
+            assert_eq!(out, e);
+            c = n;
+        }
+        for _ in 0..1000 {
+            let (n, out) = c.update((4.0, 0.0), 0.5).unwrap();
+            assert_eq!(n.state().integral, 5.0);
+            assert_eq!(out, 5.0);
+            c = n;
+        }
+        // Recovery: one step of error -4.0 takes 5.0 to 3.0 at once.
+        let (n, out) = c.update((0.0, 4.0), 0.5).unwrap();
+        assert_eq!(n.state().integral, 3.0);
+        assert_eq!(out, 3.0);
+        c = n;
+        for _ in 0..1000 {
+            let (n, _) = c.update((0.0, 4.0), 0.5).unwrap();
+            c = n;
+        }
+        assert_eq!(c.state().integral, -5.0);
+    }
+
+    /// The output equals each limit exactly when the unsaturated value is
+    /// exactly at the limit, and when it is beyond the limit.
+    /// Verifies: REQ-CTL-012
+    #[test]
+    fn test_pid_output_exactly_at_limits() {
+        let limits = PidLimits::new(-20.0, 50.0, 100.0);
+        let c = pid(10.0, 0.0, 0.0, limits);
+        assert_eq!(c.update((5.0, 0.0), 0.01).unwrap().1, 50.0);
+        assert_eq!(c.update((5.5, 0.0), 0.01).unwrap().1, 50.0);
+        assert_eq!(c.update((4.5, 0.0), 0.01).unwrap().1, 45.0);
+        assert_eq!(c.update((-2.0, 0.0), 0.01).unwrap().1, -20.0);
+        assert_eq!(c.update((-2.5, 0.0), 0.01).unwrap().1, -20.0);
+        assert_eq!(c.update((-1.5, 0.0), 0.01).unwrap().1, -15.0);
+    }
+
+    /// All three gains act together: output = Kp*e + Ki*integral - Kd*dmeas/dt.
+    /// Verifies: REQ-CTL-010
+    #[test]
+    fn test_pid_combined_gains() {
+        let c = pid(2.0, 0.5, 0.25, wide());
+        let (c, _) = c.update((10.0, 0.0), 0.5).unwrap();
+        // e = 8, integral = 5 + 4 = 9, dmeas/dt = 2/0.5 = 4
+        let (_, out) = c.update((10.0, 2.0), 0.5).unwrap();
+        assert_close(out, 2.0 * 8.0 + 0.5 * 9.0 - 0.25 * 4.0);
+    }
+
+    /// The builder's `Default` matches `new`, and so does `PidState`'s.
+    /// Verifies: REQ-CTL-014
+    #[test]
+    fn test_pid_defaults() {
+        assert_eq!(
+            PidControllerBuilder::default().build(),
+            Err(ControlError::InvalidConfig)
+        );
+        let built = PidControllerBuilder::default()
+            .limits(-1.0, 1.0, 1.0)
+            .gains(1.0, 2.0, 3.0)
+            .build()
+            .unwrap();
+        assert_eq!(
+            built,
+            PidController::new(PidGains::new(1.0, 2.0, 3.0), PidLimits::new(-1.0, 1.0, 1.0))
+        );
+        assert_eq!(PidState::default(), PidState::new());
     }
 }

@@ -137,7 +137,10 @@ fn message_fields<'a>(model: &'a Model, type_name: &str) -> Option<&'a [Field]> 
 /// Generates the `PortMessage` implementation for one message type.
 fn generate_port_message(model: &Model, type_name: &str) -> Result<TokenStream, String> {
     let fields = message_fields(model, type_name).ok_or_else(|| {
-        format!("Port message type '{}' is not a model message or struct", type_name)
+        format!(
+            "Port message type '{}' is not a model message or struct",
+            type_name
+        )
     })?;
     let wire = fields
         .iter()
@@ -245,17 +248,18 @@ pub fn generate_port_messages(model: &Model) -> Result<TokenStream, String> {
     if let Some(dup) = first_duplicate(&model.ports, |a, b| a.name == b.name) {
         return Err(format!("Port '{}' is defined twice", dup.name));
     }
-    let types: Vec<&str> = model
-        .ports
-        .iter()
-        .map(|p| p.message_type.as_str())
-        .fold(Vec::new(), |acc, t| {
-            if acc.contains(&t) {
-                acc
-            } else {
-                acc.into_iter().chain(core::iter::once(t)).collect()
-            }
-        });
+    let types: Vec<&str> =
+        model
+            .ports
+            .iter()
+            .map(|p| p.message_type.as_str())
+            .fold(Vec::new(), |acc, t| {
+                if acc.contains(&t) {
+                    acc
+                } else {
+                    acc.into_iter().chain(core::iter::once(t)).collect()
+                }
+            });
     let impls = types
         .iter()
         .map(|t| generate_port_message(model, t))
@@ -285,9 +289,10 @@ fn resolve_ports<'a>(
     names
         .iter()
         .map(|n| {
-            let def = model.ports.iter().find(|p| &p.name == n).ok_or_else(|| {
-                format!("Component '{}' uses undefined port '{}'", comp.name, n)
-            })?;
+            let def =
+                model.ports.iter().find(|p| &p.name == n).ok_or_else(|| {
+                    format!("Component '{}' uses undefined port '{}'", comp.name, n)
+                })?;
             let direction = Direction::parse(def)?;
             if direction != expected {
                 return Err(format!(
@@ -312,7 +317,11 @@ enum StateBinding {
     /// A state enum with no linked machine; starts at the first variant.
     Fixed { ty: Ident, initial: Ident },
     /// Driven by a generated state machine module.
-    Machine { ty: Ident, event: Ident, module: Ident },
+    Machine {
+        ty: Ident,
+        event: Ident,
+        module: Ident,
+    },
 }
 
 /// Determines a component's state binding from its `state` and `state_machine`.
@@ -324,7 +333,10 @@ fn bind_state(model: &Model, comp: &Component) -> Result<StateBinding, String> {
                 .iter()
                 .find(|f| &f.name == fsm_name)
                 .ok_or_else(|| {
-                    format!("Component '{}' links undefined state machine '{}'", comp.name, fsm_name)
+                    format!(
+                        "Component '{}' links undefined state machine '{}'",
+                        comp.name, fsm_name
+                    )
                 })?;
             match &comp.state {
                 Some(s) if s != &fsm.state_type => Err(format!(
@@ -361,14 +373,25 @@ fn bind_state(model: &Model, comp: &Component) -> Result<StateBinding, String> {
 }
 
 /// Generates code for one component.
-fn generate_component(model: &Model, comp: &Component, index: usize) -> Result<TokenStream, String> {
-    let id = u16::try_from(index + 1)
-        .map_err(|_| format!("Component '{}': too many components for a u16 ID", comp.name))?;
+fn generate_component(
+    model: &Model,
+    comp: &Component,
+    index: usize,
+) -> Result<TokenStream, String> {
+    let id = u16::try_from(index + 1).map_err(|_| {
+        format!(
+            "Component '{}': too many components for a u16 ID",
+            comp.name
+        )
+    })?;
     let inputs = resolve_ports(model, comp, &comp.input_ports, Direction::Input)?;
     let outputs = resolve_ports(model, comp, &comp.output_ports, Direction::Output)?;
     let ports: Vec<ResolvedPort> = inputs.into_iter().chain(outputs).collect();
     if let Some(dup) = first_duplicate(&ports, |a, b| a.def.name == b.def.name) {
-        return Err(format!("Component '{}' lists port '{}' twice", comp.name, dup.def.name));
+        return Err(format!(
+            "Component '{}' lists port '{}' twice",
+            comp.name, dup.def.name
+        ));
     }
     let binding = bind_state(model, comp)?;
     let commands = comp
@@ -378,7 +401,10 @@ fn generate_component(model: &Model, comp: &Component, index: usize) -> Result<T
         .collect::<Result<Vec<_>, _>>()?;
     let named_commands: Vec<(&String, &Ident)> = comp.commands.iter().zip(&commands).collect();
     if let Some((dup, _)) = first_duplicate(&named_commands, |a, b| a.1 == b.1) {
-        return Err(format!("Component '{}' command '{}' is duplicated", comp.name, dup));
+        return Err(format!(
+            "Component '{}' command '{}' is duplicated",
+            comp.name, dup
+        ));
     }
 
     let name = format_ident!("{}", comp.name);
@@ -411,7 +437,12 @@ fn generate_component(model: &Model, comp: &Component, index: usize) -> Result<T
         .collect();
     let port_docs: Vec<String> = ports
         .iter()
-        .map(|p| format!("Port `{}` ({}) carrying `{}`.", p.def.name, p.def.direction, p.def.message_type))
+        .map(|p| {
+            format!(
+                "Port `{}` ({}) carrying `{}`.",
+                p.def.name, p.def.direction, p.def.message_type
+            )
+        })
         .collect();
     let port_count = ports.len();
     let port_names: Vec<&str> = ports.iter().map(|p| p.def.name.as_str()).collect();
@@ -653,6 +684,7 @@ state_machines:
         parse_model(&format!("{}components:\n{}", BASE, components)).unwrap()
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn undefined_port_is_rejected() {
         let model = model_with("  - name: C\n    kind: passive\n    input_ports: [missing]\n");
@@ -660,6 +692,7 @@ state_machines:
         assert!(err.contains("undefined port 'missing'"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn port_direction_mismatch_is_rejected() {
         let model = model_with("  - name: C\n    kind: passive\n    input_ports: [output_a]\n");
@@ -667,13 +700,16 @@ state_machines:
         assert!(err.contains("declared output"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn state_conflicting_with_machine_is_rejected() {
-        let model = model_with("  - name: C\n    kind: active\n    state: E\n    state_machine: M\n");
+        let model =
+            model_with("  - name: C\n    kind: active\n    state: E\n    state_machine: M\n");
         let err = generate_components(&model).unwrap_err();
         assert!(err.contains("differs from state machine"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn undefined_state_machine_is_rejected() {
         let model = model_with("  - name: C\n    kind: active\n    state_machine: Nope\n");
@@ -681,6 +717,7 @@ state_machines:
         assert!(err.contains("undefined state machine"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn struct_state_without_machine_is_rejected() {
         let model = model_with("  - name: C\n    kind: passive\n    state: Nested\n");
@@ -688,6 +725,7 @@ state_machines:
         assert!(err.contains("must be a model enum"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn duplicate_command_is_rejected() {
         let model = model_with("  - name: C\n    kind: passive\n    commands: [arm, Arm]\n");
@@ -695,6 +733,7 @@ state_machines:
         assert!(err.contains("duplicated"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn non_primitive_port_field_is_rejected() {
         let mut model = model_with("  - name: C\n    kind: passive\n");
@@ -703,6 +742,7 @@ state_machines:
         assert!(err.contains("field 'inner'"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn unknown_port_message_type_is_rejected() {
         let mut model = model_with("  - name: C\n    kind: passive\n");
@@ -725,5 +765,221 @@ state_machines:
         assert_eq!(WireType::of("u16").map(WireType::width), Some(2));
         assert_eq!(WireType::of("bool").map(WireType::width), Some(1));
         assert_eq!(WireType::of("String"), None);
+    }
+
+    fn component_code(components: &str) -> String {
+        generate_components(&model_with(components))
+            .unwrap()
+            .to_string()
+    }
+
+    /// A component without state has an empty state struct and no `handle`.
+    /// Verifies: REQ-GEN-011
+    #[test]
+    fn stateless_component_has_empty_state() {
+        let code = component_code("  - name: C\n    kind: passive\n");
+        assert!(code.contains("pub struct CState { }"), "{}", code);
+        assert!(code.contains("state : CState { }"), "{}", code);
+        assert!(!code.contains("fn handle"), "{}", code);
+        assert!(
+            code.contains("pub const IS_ACTIVE : bool = false"),
+            "{}",
+            code
+        );
+        assert!(
+            code.contains("const ID : :: middleware :: ComponentId = 1u16"),
+            "{}",
+            code
+        );
+        assert!(
+            code.contains("pub const TRACES : [& 'static str ; 0usize] = []"),
+            "{}",
+            code
+        );
+    }
+
+    /// A state enum without a state machine starts at its first variant and
+    /// has no `handle`.
+    /// Verifies: REQ-GEN-011
+    #[test]
+    fn fixed_state_starts_at_first_variant() {
+        let code = component_code("  - name: C\n    kind: passive\n    state: S\n");
+        assert!(code.contains("pub current : S"), "{}", code);
+        assert!(code.contains("CState { current : S :: A }"), "{}", code);
+        assert!(!code.contains("fn handle"), "{}", code);
+    }
+
+    /// A linked state machine sets the initial state and generates `handle`;
+    /// a matching explicit `state` is accepted. IDs count from 1 in model order.
+    /// Verifies: REQ-GEN-011
+    #[test]
+    fn machine_state_generates_handle() {
+        let code = component_code(
+            "  - name: C\n    kind: active\n    state_machine: M\n  - name: D\n    kind: active\n    state: S\n    state_machine: M\n    input_ports: [input_a]\n    output_ports: [output_a]\n    commands: [reset_fault]\n",
+        );
+        assert!(
+            code.contains("CState { current : M :: INITIAL_STATE }"),
+            "{}",
+            code
+        );
+        assert!(
+            code.contains("pub fn handle < H : M :: Hooks >"),
+            "{}",
+            code
+        );
+        assert!(
+            code.contains("match M :: step (self . state . current , event , hooks)"),
+            "{}",
+            code
+        );
+        assert!(
+            code.contains("pub const IS_ACTIVE : bool = true"),
+            "{}",
+            code
+        );
+        assert!(code.contains("= 2u16"), "{}", code);
+        assert!(
+            code.contains("InputAPort : :: middleware :: port :: InputPort < Msg >"),
+            "{}",
+            code
+        );
+        assert!(
+            code.contains("OutputAPort : :: middleware :: port :: OutputPort < Msg >"),
+            "{}",
+            code
+        );
+        assert!(
+            code.contains("pub enum DCommand { ResetFault }"),
+            "{}",
+            code
+        );
+        assert!(code.contains("[\"input_a\" , \"output_a\"]"), "{}", code);
+    }
+
+    /// Verifies: REQ-GEN-017
+    #[test]
+    fn port_listed_twice_is_rejected() {
+        let model =
+            model_with("  - name: C\n    kind: passive\n    input_ports: [input_a, input_a]\n");
+        let err = generate_components(&model).unwrap_err();
+        assert!(err.contains("lists port 'input_a' twice"), "{}", err);
+    }
+
+    /// Defence in depth: a component referring to a port whose direction is
+    /// invalid is rejected even if `generate_port_messages` did not run.
+    #[test]
+    fn invalid_direction_of_used_port_is_rejected() {
+        let mut model = model_with("  - name: C\n    kind: passive\n    input_ports: [input_a]\n");
+        model.ports[0].direction = "sideways".to_string();
+        let err = generate_components(&model).unwrap_err();
+        assert!(err.contains("must be 'input' or 'output'"), "{}", err);
+    }
+
+    #[test]
+    fn invalid_command_name_is_rejected() {
+        let model = model_with("  - name: C\n    kind: passive\n    commands: [bad-name]\n");
+        let err = generate_components(&model).unwrap_err();
+        assert!(err.contains("command name 'bad-name'"), "{}", err);
+    }
+
+    #[test]
+    fn non_snake_case_port_name_is_rejected() {
+        let mut model = model_with("  - name: C\n    kind: passive\n");
+        model.ports[0].name = "InputA".to_string();
+        let err = generate_port_messages(&model).unwrap_err();
+        assert!(
+            err.contains("port name 'InputA' must be snake_case"),
+            "{}",
+            err
+        );
+    }
+
+    /// Verifies: REQ-GEN-017
+    #[test]
+    fn port_defined_twice_is_rejected() {
+        let mut model = model_with("  - name: C\n    kind: passive\n");
+        model.ports[1].name = "input_a".to_string();
+        let err = generate_port_messages(&model).unwrap_err();
+        assert!(err.contains("Port 'input_a' is defined twice"), "{}", err);
+    }
+
+    /// Ports sharing a message type produce one `PortMessage` impl; bool and
+    /// number fields are encoded at consecutive offsets.
+    /// Verifies: REQ-GEN-011
+    #[test]
+    fn port_message_layout() {
+        let mut model = model_with("  - name: C\n    kind: passive\n");
+        model.messages[0].fields.push(Field {
+            name: "flag".to_string(),
+            field_type: "bool".to_string(),
+        });
+        let code = generate_port_messages(&model).unwrap().to_string();
+        assert_eq!(
+            code.matches("impl :: middleware :: PortMessage for Msg")
+                .count(),
+            1,
+            "{}",
+            code
+        );
+        assert!(
+            code.contains("pub const WIRE_SIZE : usize = 5usize"),
+            "{}",
+            code
+        );
+        assert!(code.contains("get_mut (0usize .. 4usize)"), "{}", code);
+        assert!(code.contains("get_mut (4usize .. 5usize)"), "{}", code);
+        assert!(code.contains("[u8 :: from (self . flag)]"), "{}", code);
+        assert!(
+            code.contains("flag : match buffer . get (4usize)"),
+            "{}",
+            code
+        );
+        assert!(code.contains("value : f32 :: from_le_bytes"), "{}", code);
+    }
+
+    /// Boundary: exactly `MAX_MESSAGE_SIZE` bytes is accepted, one more is
+    /// rejected.
+    #[test]
+    fn message_size_limit_boundary() {
+        let field = |i: usize| Field {
+            name: format!("f{}", i),
+            field_type: "u8".to_string(),
+        };
+        let mut model = model_with("  - name: C\n    kind: passive\n");
+        model.messages[0].fields = (0..MAX_MESSAGE_SIZE).map(field).collect();
+        let code = generate_port_messages(&model).unwrap().to_string();
+        assert!(code.contains("WIRE_SIZE : usize = 256usize"), "{}", code);
+        model.messages[0].fields.push(field(MAX_MESSAGE_SIZE));
+        let err = generate_port_messages(&model).unwrap_err();
+        assert!(err.contains("is 257 bytes; the maximum is 256"), "{}", err);
+    }
+
+    #[test]
+    fn struct_message_type_is_found() {
+        let mut model = model_with("  - name: C\n    kind: passive\n");
+        model.types.structs[0].fields[0].field_type = "u16".to_string();
+        model.ports[0].message_type = "Nested".to_string();
+        let code = generate_port_messages(&model).unwrap().to_string();
+        assert!(code.contains("PortMessage for Nested"), "{}", code);
+        assert!(code.contains("PortMessage for Msg"), "{}", code);
+    }
+
+    #[test]
+    fn wire_widths_of_every_primitive() {
+        for (ty, width) in [
+            ("u8", 1),
+            ("i8", 1),
+            ("u16", 2),
+            ("i16", 2),
+            ("u32", 4),
+            ("i32", 4),
+            ("f32", 4),
+            ("u64", 8),
+            ("i64", 8),
+            ("f64", 8),
+            ("bool", 1),
+        ] {
+            assert_eq!(WireType::of(ty).map(WireType::width), Some(width), "{}", ty);
+        }
     }
 }

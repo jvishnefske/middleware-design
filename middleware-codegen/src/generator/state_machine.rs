@@ -78,7 +78,10 @@ fn with_unique(names: Vec<String>, name: &str) -> Vec<String> {
     if names.iter().any(|n| n == name) {
         names
     } else {
-        names.into_iter().chain(core::iter::once(name.to_string())).collect()
+        names
+            .into_iter()
+            .chain(core::iter::once(name.to_string()))
+            .collect()
     }
 }
 
@@ -110,11 +113,18 @@ fn collect_hook_names(fsm: &StateMachine) -> Result<HookNames, String> {
 }
 
 /// Looks up an enum definition by name.
-fn find_enum<'a>(enums: &'a [EnumDef], name: &str, fsm: &str, role: &str) -> Result<&'a EnumDef, String> {
-    enums
-        .iter()
-        .find(|e| e.name == name)
-        .ok_or_else(|| format!("State machine '{}': {} type '{}' is not a model enum", fsm, role, name))
+fn find_enum<'a>(
+    enums: &'a [EnumDef],
+    name: &str,
+    fsm: &str,
+    role: &str,
+) -> Result<&'a EnumDef, String> {
+    enums.iter().find(|e| e.name == name).ok_or_else(|| {
+        format!(
+            "State machine '{}': {} type '{}' is not a model enum",
+            fsm, role, name
+        )
+    })
 }
 
 /// Checks that `variant` names a variant of `enum_def`.
@@ -131,7 +141,11 @@ fn require_variant(enum_def: &EnumDef, variant: &str, fsm: &str) -> Result<(), S
 
 /// Validates that every state and transition refers to existing enum variants
 /// and that no state is defined twice.
-fn validate_references(fsm: &StateMachine, states: &EnumDef, events: &EnumDef) -> Result<(), String> {
+fn validate_references(
+    fsm: &StateMachine,
+    states: &EnumDef,
+    events: &EnumDef,
+) -> Result<(), String> {
     fsm.states
         .iter()
         .try_for_each(|s| require_variant(states, &s.name, &fsm.name))?;
@@ -142,7 +156,10 @@ fn validate_references(fsm: &StateMachine, states: &EnumDef, events: &EnumDef) -
         require_variant(events, &t.event, &fsm.name)
     })?;
     match first_duplicate(&fsm.states, |a, b| a.name == b.name) {
-        Some(dup) => Err(format!("State machine '{}': state '{}' defined twice", fsm.name, dup.name)),
+        Some(dup) => Err(format!(
+            "State machine '{}': state '{}' defined twice",
+            fsm.name, dup.name
+        )),
         None => Ok(()),
     }
 }
@@ -193,7 +210,10 @@ fn lifecycle_fn(
 /// event or initial state is not a variant of its enum, a state is defined
 /// twice, a hook name is not snake_case, or a name is used both as a guard
 /// and as an action.
-pub fn generate_state_machine(fsm: &StateMachine, enums: &[EnumDef]) -> Result<TokenStream, String> {
+pub fn generate_state_machine(
+    fsm: &StateMachine,
+    enums: &[EnumDef],
+) -> Result<TokenStream, String> {
     let state_enum = find_enum(enums, &fsm.state_type, &fsm.name, "state")?;
     let event_enum = find_enum(enums, &fsm.events, &fsm.name, "event")?;
     validate_references(fsm, state_enum, event_enum)?;
@@ -233,7 +253,8 @@ pub fn generate_state_machine(fsm: &StateMachine, enums: &[EnumDef]) -> Result<T
             fsm.name, g, v
         ));
     }
-    let named_actions: Vec<(&String, &Ident)> = hooks.actions.iter().zip(&action_variants).collect();
+    let named_actions: Vec<(&String, &Ident)> =
+        hooks.actions.iter().zip(&action_variants).collect();
     if let Some((a, v)) = first_duplicate(&named_actions, |a, b| a.1 == b.1) {
         return Err(format!(
             "State machine '{}': action '{}' collides with another action as '{}'",
@@ -538,9 +559,13 @@ types:
         let model = parse_model(&yaml).unwrap();
         let names = collect_hook_names(&model.state_machines[0]).unwrap();
         assert_eq!(names.guards, vec!["ready".to_string()]);
-        assert_eq!(names.actions, vec!["leave".to_string(), "arrive".to_string()]);
+        assert_eq!(
+            names.actions,
+            vec!["leave".to_string(), "arrive".to_string()]
+        );
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn guard_and_action_with_same_name_is_rejected() {
         let yaml = with_fsm(
@@ -564,6 +589,7 @@ types:
         assert!(err.contains("both a guard and an action"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn unknown_variant_is_rejected() {
         let yaml = with_fsm(
@@ -585,6 +611,7 @@ types:
         assert!(err.contains("'Missing' is not a variant"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-017
     #[test]
     fn unknown_state_type_is_rejected() {
         let yaml = with_fsm(
@@ -620,5 +647,155 @@ types:
         let model = parse_model(&yaml).unwrap();
         let err = generate_state_machine(&model.state_machines[0], &model.types.enums).unwrap_err();
         assert!(err.contains("must be snake_case"), "{}", err);
+    }
+
+    fn generate(fsm: &str) -> Result<String, String> {
+        let model = parse_model(&with_fsm(fsm)).unwrap();
+        generate_state_machine(&model.state_machines[0], &model.types.enums).map(|t| t.to_string())
+    }
+
+    /// Boundary: a machine with no guards and no actions gets empty `Guard`
+    /// and `Action` enums and dispatch functions that match on nothing.
+    #[test]
+    fn machine_without_hooks_has_empty_dispatch() {
+        let code = generate(
+            "  - name: M\n    state_type: S\n    initial_state: A\n    events: E\n    states:\n      - name: A\n    transitions:\n      - from: A\n        event: Go\n        to: B\n",
+        )
+        .unwrap();
+        assert!(code.contains("pub enum Guard { }"), "{}", code);
+        assert!(code.contains("pub enum Action { }"), "{}", code);
+        assert!(
+            code.contains("_hooks : & H) -> bool { match guard { } }"),
+            "{}",
+            code
+        );
+        assert!(code.contains("match action { }"), "{}", code);
+        assert!(
+            code.contains("pub const TRANSITION_COUNT : usize = 1usize"),
+            "{}",
+            code
+        );
+    }
+
+    /// Guards and actions are dispatched to their `Hooks` methods.
+    #[test]
+    fn hooks_are_dispatched_by_name() {
+        let code = generate(
+            "  - name: M\n    state_type: S\n    initial_state: A\n    events: E\n    states:\n      - name: A\n        on_exit: leave\n    transitions:\n      - from: A\n        event: Go\n        to: B\n        guard: ready\n        action: act\n",
+        )
+        .unwrap();
+        assert!(
+            code.contains("Guard :: Ready => hooks . ready ()"),
+            "{}",
+            code
+        );
+        assert!(
+            code.contains("Action :: Leave => hooks . leave ()"),
+            "{}",
+            code
+        );
+        assert!(code.contains("Action :: Act => hooks . act ()"), "{}", code);
+        assert!(code.contains("guard : Some (Guard :: Ready)"), "{}", code);
+        assert!(code.contains("action : Some (Action :: Act)"), "{}", code);
+        assert!(
+            code.contains("S :: A => Some (Action :: Leave)"),
+            "{}",
+            code
+        );
+        assert!(code.contains("S :: B => None"), "{}", code);
+    }
+
+    /// Two snake_case guard names that map to the same variant are rejected.
+    /// Verifies: REQ-GEN-017
+    #[test]
+    fn colliding_guard_names_are_rejected() {
+        let err = generate(
+            "  - name: M\n    state_type: S\n    initial_state: A\n    events: E\n    states:\n      - name: A\n    transitions:\n      - from: A\n        event: Go\n        to: B\n        guard: a_b\n      - from: A\n        event: Go\n        to: A\n        guard: a__b\n",
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("guard 'a__b' collides with another guard as 'AB'"),
+            "{}",
+            err
+        );
+    }
+
+    /// Verifies: REQ-GEN-017
+    #[test]
+    fn colliding_action_names_are_rejected() {
+        let err = generate(
+            "  - name: M\n    state_type: S\n    initial_state: A\n    events: E\n    states:\n      - name: A\n        on_enter: x_y\n        on_exit: x__y\n    transitions: []\n",
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("action 'x__y' collides with another action as 'XY'"),
+            "{}",
+            err
+        );
+    }
+
+    #[test]
+    fn non_snake_case_guard_is_rejected() {
+        let err = generate(
+            "  - name: M\n    state_type: S\n    initial_state: A\n    events: E\n    states:\n      - name: A\n    transitions:\n      - from: A\n        event: Go\n        to: B\n        guard: Ready\n",
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("guard name 'Ready' must be snake_case"),
+            "{}",
+            err
+        );
+    }
+
+    /// Verifies: REQ-GEN-017
+    #[test]
+    fn reference_errors_are_rejected() {
+        let cases = [
+            (
+                "events: E",
+                "events: Nope",
+                "event type 'Nope' is not a model enum",
+            ),
+            (
+                "initial_state: A",
+                "initial_state: Z",
+                "'Z' is not a variant of 'S'",
+            ),
+            (
+                "      - name: A\n",
+                "      - name: Q\n",
+                "'Q' is not a variant of 'S'",
+            ),
+            ("from: A", "from: Z", "'Z' is not a variant of 'S'"),
+            ("event: Go", "event: Stop", "'Stop' is not a variant of 'E'"),
+            (
+                "      - name: A\n",
+                "      - name: A\n      - name: A\n",
+                "state 'A' defined twice",
+            ),
+        ];
+        let fsm = "  - name: M\n    state_type: S\n    initial_state: A\n    events: E\n    states:\n      - name: A\n    transitions:\n      - from: A\n        event: Go\n        to: B\n";
+        for (from, to, expected) in cases {
+            let err = generate(&fsm.replacen(from, to, 1)).unwrap_err();
+            assert!(err.contains(expected), "{:?}: {}", to, err);
+        }
+    }
+
+    #[test]
+    fn every_machine_is_generated_and_first_error_is_returned() {
+        let one = "  - name: M\n    state_type: S\n    initial_state: A\n    events: E\n    states:\n      - name: A\n    transitions: []\n";
+        let model =
+            parse_model(&with_fsm(&format!("{}{}", one, one.replace("M\n", "N\n")))).unwrap();
+        let code = generate_state_machines(&model.state_machines, &model.types.enums)
+            .unwrap()
+            .to_string();
+        assert!(
+            code.contains("pub mod M") && code.contains("pub mod N"),
+            "{}",
+            code
+        );
+        let bad = format!("{}{}", one, one.replace("state_type: S", "state_type: X"));
+        let model = parse_model(&with_fsm(&bad)).unwrap();
+        assert!(generate_state_machines(&model.state_machines, &model.types.enums).is_err());
     }
 }

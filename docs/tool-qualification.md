@@ -131,7 +131,17 @@ For the integrator's own models, requirements-based testing of the generated cod
 - **Diagnostic text.** The committed `.stderr` files contain rustc's diagnostic layout and operating-system error text (for example "os error 2" on Linux). A different toolchain version or host may require regenerating and reviewing them. A diagnostic that changes is not a tool malfunction.
 - **Determinism.** Determinism is argued from the design and not measured by an automated comparison of expansions across builds or hosts.
 
-## 7. Outside this repository
+## 7. Verification tools
+
+The following tools do not produce delivered code. A malfunction in any of them could still fail to detect an error in the delivered code, so each is TI2. Each one is listed with the measures that detect its own malfunction.
+
+**`cargo xtask trace` (requirements traceability, `xtask/`).** Possible error: it reports a requirement as verified when no test verifies it, for example through a scanner bug that attaches a tag to the wrong function. Detection: 41 unit tests over in-memory fixtures, covering tag placement, broken attribute blocks, dangling and malformed tags, unknown and duplicate IDs, and stale reports. The generated `docs/traceability.md` names every test by path and function, so a reviewer can check any row against the source. A manual check showed that deleting one `Verifies:` tag makes `--check` fail. Its known limitation is that it scans text, not Rust syntax, so a tag inside a string literal in a scanned crate would be picked up; `xtask/` is excluded from the scan for this reason. Rating: TD2, giving TCL2. Confidence is from validation (method 1c) and the reviewable output.
+
+**`cargo llvm-cov` with `nightly-2025-09-08` (structural coverage, `cargo xtask coverage`).** Possible errors: it reports a branch as covered when it is not, or it miscounts. Branch coverage instrumentation needs the nightly-only `-Z coverage-options=branch`. The toolchain is pinned in `xtask/src/coverage.rs` and recorded in `design.md` (Known deviations), so the measured binary is not the stable-built delivered binary; the source and test suite are the same. Detection: the per-file results are cross-checked against requirements-based tests that deliberately exercise each error path, and every residual gap is explained line by line in `docs/coverage-exclusions.md`. Known artefacts (per-instantiation counting of generic code, no data from proc-macro expansion, counter-mismatch warnings for third-party `syn`) are documented there. Rating: TD2, giving TCL2. The integrator must use this toolchain pin, or requalify it by re-running the gate and reviewing the exclusions against a new report.
+
+**`trybuild`, `proptest` and clippy.** `trybuild` compares compiler diagnostics with committed `.stderr` files. A false pass would need the compiler to emit the expected text for a model that should have been accepted, and the `pass` case guards the opposite direction. `.stderr` text is specific to a toolchain version (section 6). `proptest` could pass vacuously if its generator produced trivial sequences; the `lockstep_covers_every_row` tests assert that every table row fires and every outcome kind occurs. Clippy enforces the coding guidelines, and `checks/nostd-gen/tests/platform.rs` independently checks that every crate opts in to the lint set and that no non-test code relaxes a denied lint. Rating for each: TD2 or better, giving TCL2 or better.
+
+## 8. Outside this repository
 
 The following items are needed for a complete tool qualification and cannot be produced by the code in this workspace:
 

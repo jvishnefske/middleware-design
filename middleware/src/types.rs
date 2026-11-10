@@ -8,11 +8,11 @@
 //! - REQ-TYP-010, REQ-TYP-011, REQ-TYP-012: Primitive wrappers
 //! - REQ-TYP-020, REQ-TYP-021, REQ-TYP-022: Bounded collections
 
-pub mod unit;
-pub mod primitive;
 pub mod bounded;
+pub mod primitive;
+pub mod unit;
 
 // Re-export key types
-pub use unit::*;
-pub use primitive::*;
 pub use bounded::*;
+pub use primitive::*;
+pub use unit::*;

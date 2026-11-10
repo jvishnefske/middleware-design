@@ -166,7 +166,10 @@ pub trait OutputPort<M: PortMessage> {
 mod tests {
     use super::*;
     use crate::error::SerializationError;
+    use core::cell::Cell;
+    use core::marker::PhantomData;
 
+    /// Four-byte little-endian `u32` message.
     #[derive(Debug, Clone, PartialEq)]
     struct TestMessage {
         value: u32,
@@ -192,103 +195,176 @@ mod tests {
         }
     }
 
-    struct TestOutputPort {
-        name: &'static str,
-        connected: bool,
-        full: bool,
+    /// One-byte message, a second type to show ports are typed per message.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct Tick(u8);
+
+    impl PortMessage for Tick {
+        fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializationError> {
+            *buffer
+                .first_mut()
+                .ok_or(SerializationError::BufferTooSmall)? = self.0;
+            Ok(1)
+        }
+
+        fn deserialize(buffer: &[u8]) -> Result<Self, SerializationError> {
+            buffer
+                .first()
+                .map(|b| Tick(*b))
+                .ok_or(SerializationError::InvalidFormat)
+        }
     }
 
-    impl TestOutputPort {
-        fn new(name: &'static str, connected: bool) -> Self {
+    const SLOT: usize = 8;
+
+    /// Single-slot output port that serializes each message into a frame
+    /// of `frame_len` bytes, as a transport would before transmitting.
+    struct SlotOutputPort<M> {
+        connected: bool,
+        frame_len: usize,
+        slot: Cell<Option<([u8; SLOT], usize)>>,
+        _message: PhantomData<M>,
+    }
+
+    impl<M: PortMessage> SlotOutputPort<M> {
+        fn new(connected: bool, frame_len: usize) -> Self {
             Self {
-                name,
                 connected,
-                full: false,
+                frame_len,
+                slot: Cell::new(None),
+                _message: PhantomData,
             }
         }
 
-        fn with_full(mut self, full: bool) -> Self {
-            self.full = full;
-            self
+        /// Removes and decodes the pending frame, as the consumer would.
+        fn take(&self) -> Option<Result<M, SerializationError>> {
+            let (buf, len) = self.slot.take()?;
+            Some(
+                buf.get(..len)
+                    .map_or(Err(SerializationError::InvalidFormat), M::deserialize),
+            )
         }
     }
 
-    impl OutputPort<TestMessage> for TestOutputPort {
+    impl<M: PortMessage> OutputPort<M> for SlotOutputPort<M> {
         fn name(&self) -> &'static str {
-            self.name
+            "slot"
         }
 
         fn is_connected(&self) -> bool {
             self.connected
         }
 
-        fn send(&self, _message: TestMessage) -> Result<(), SendError> {
+        fn send(&self, message: M) -> Result<(), SendError> {
             if !self.connected {
                 return Err(SendError::Disconnected);
             }
-            if self.full {
+            if let Some(pending) = self.slot.take() {
+                self.slot.set(Some(pending));
                 return Err(SendError::Full);
             }
-            // In real implementation, would actually send the message
-            // For testing, we just validate it can be sent
+            let mut buf = [0u8; SLOT];
+            let frame = buf
+                .get_mut(..self.frame_len)
+                .ok_or(SendError::SerializationFailed)?;
+            let len = message
+                .serialize(frame)
+                .map_err(|_| SendError::SerializationFailed)?;
+            self.slot.set(Some((buf, len)));
             Ok(())
         }
     }
 
-    #[test]
-    fn output_port_name() {
-        let port = TestOutputPort::new("test_output", true);
-        assert_eq!(port.name(), "test_output");
+    fn send_as<M: PortMessage, P: OutputPort<M>>(port: &P, message: M) -> Result<(), SendError> {
+        port.send(message)
     }
 
+    /// The same port implementation, instantiated for two message types,
+    /// accepts and transmits exactly the type it is parameterized by.
+    ///
+    /// Verifies: REQ-PRT-020
     #[test]
-    fn output_port_connected() {
-        let port = TestOutputPort::new("test", true);
-        assert!(port.is_connected());
+    fn output_ports_are_parameterized_by_message_type() {
+        let message_port = SlotOutputPort::<TestMessage>::new(true, 4);
+        let tick_port = SlotOutputPort::<Tick>::new(true, 1);
+
+        assert_eq!(
+            send_as(&message_port, TestMessage { value: 0xDEAD_BEEF }),
+            Ok(())
+        );
+        assert_eq!(send_as(&tick_port, Tick(200)), Ok(()));
+        assert_eq!(
+            message_port.take(),
+            Some(Ok(TestMessage { value: 0xDEAD_BEEF }))
+        );
+        assert_eq!(tick_port.take(), Some(Ok(Tick(200))));
+        assert_eq!(tick_port.take(), None);
+
+        assert_eq!(OutputPort::<Tick>::name(&tick_port), "slot");
+        assert!(OutputPort::<TestMessage>::is_connected(&message_port));
     }
 
+    /// `send` has the signature `Result<(), SendError>` (checked by the
+    /// function-pointer binding) and every injected fault is a distinct
+    /// error: full port (with the pending message preserved), no consumer,
+    /// and a frame too small to serialize into (zero bytes and one byte
+    /// short). `try_send` forwards the same outcomes.
+    ///
+    /// Verifies: REQ-PRT-021
     #[test]
-    fn output_port_send_success() {
-        let port = TestOutputPort::new("test", true);
-        let msg = TestMessage { value: 42 };
+    fn send_returns_result_with_send_error() {
+        let _send: fn(&SlotOutputPort<TestMessage>, TestMessage) -> Result<(), SendError> =
+            <SlotOutputPort<TestMessage> as OutputPort<TestMessage>>::send;
 
-        let result = port.send(msg);
-        assert!(result.is_ok());
-    }
+        let port = SlotOutputPort::<TestMessage>::new(true, 4);
+        assert_eq!(port.send(TestMessage { value: 1 }), Ok(()));
+        assert_eq!(port.send(TestMessage { value: 2 }), Err(SendError::Full));
+        assert_eq!(
+            port.try_send(TestMessage { value: 3 }),
+            Err(SendError::Full)
+        );
+        assert_eq!(port.take(), Some(Ok(TestMessage { value: 1 })));
+        assert_eq!(port.try_send(TestMessage { value: 4 }), Ok(()));
+        assert_eq!(port.take(), Some(Ok(TestMessage { value: 4 })));
 
-    #[test]
-    fn output_port_send_disconnected() {
-        let port = TestOutputPort::new("test", false);
-        let msg = TestMessage { value: 42 };
+        let disconnected = SlotOutputPort::<TestMessage>::new(false, 4);
+        assert_eq!(
+            disconnected.send(TestMessage { value: 1 }),
+            Err(SendError::Disconnected)
+        );
+        assert_eq!(
+            disconnected.try_send(TestMessage { value: 1 }),
+            Err(SendError::Disconnected)
+        );
+        assert_eq!(disconnected.take(), None);
 
-        let result = port.send(msg);
-        assert_eq!(result, Err(SendError::Disconnected));
-    }
-
-    #[test]
-    fn output_port_send_full() {
-        let port = TestOutputPort::new("test", true).with_full(true);
-        let msg = TestMessage { value: 42 };
-
-        let result = port.send(msg);
-        assert_eq!(result, Err(SendError::Full));
-    }
-
-    #[test]
-    fn output_port_try_send() {
-        let port = TestOutputPort::new("test", true);
-        let msg = TestMessage { value: 123 };
-
-        let result = port.try_send(msg);
-        assert!(result.is_ok());
+        let one_short = SlotOutputPort::<TestMessage>::new(true, 3);
+        assert_eq!(
+            one_short.send(TestMessage { value: 1 }),
+            Err(SendError::SerializationFailed)
+        );
+        assert_eq!(one_short.take(), None);
+        let zero = SlotOutputPort::<Tick>::new(true, 0);
+        assert_eq!(zero.send(Tick(1)), Err(SendError::SerializationFailed));
+        let oversized = SlotOutputPort::<Tick>::new(true, SLOT + 1);
+        assert_eq!(oversized.send(Tick(1)), Err(SendError::SerializationFailed));
     }
 
     #[test]
     fn output_port_consumer_count() {
-        let connected = TestOutputPort::new("test", true);
+        let connected = SlotOutputPort::<TestMessage>::new(true, 4);
         assert_eq!(connected.consumer_count(), 1);
 
-        let disconnected = TestOutputPort::new("test", false);
+        let disconnected = SlotOutputPort::<TestMessage>::new(false, 4);
         assert_eq!(disconnected.consumer_count(), 0);
+    }
+
+    #[test]
+    fn consumer_decodes_invalid_frame_as_error() {
+        let port = SlotOutputPort::<TestMessage>::new(true, 4);
+        port.slot.set(Some(([0u8; SLOT], 2)));
+        assert_eq!(port.take(), Some(Err(SerializationError::InvalidFormat)));
+        port.slot.set(Some(([0u8; SLOT], SLOT + 1)));
+        assert_eq!(port.take(), Some(Err(SerializationError::InvalidFormat)));
     }
 }

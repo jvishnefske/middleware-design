@@ -6,6 +6,8 @@
 //! # Traceability
 //!
 //! - REQ-SER-021: Fixed-size TelemetryBuffer for encoding
+//! - REQ-SER-022: Encoding into a too-small buffer returns
+//!   `BufferError::BufferOverflow` and leaves the buffer empty
 
 use minicbor::{encode, Encode};
 
@@ -183,12 +185,13 @@ impl<const SIZE: usize> Default for TelemetryBuffer<SIZE> {
 }
 
 // test code: a panic is a test failure, which is the intended reporting mechanism
-#[cfg_attr(test, allow(clippy::unwrap_used))]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::telemetry::messages::ControlTelemetry;
 
+    /// Verifies: REQ-SER-021
     #[test]
     fn test_buffer_new() {
         let buffer = TelemetryBuffer::<128>::new();
@@ -197,6 +200,7 @@ mod tests {
         assert_eq!(buffer.capacity(), 128);
     }
 
+    /// Verifies: REQ-SER-021
     #[test]
     fn test_buffer_encode() {
         let mut buffer = TelemetryBuffer::<128>::new();
@@ -205,9 +209,10 @@ mod tests {
         let result = buffer.encode(&msg);
         assert!(result.is_ok());
         assert!(!buffer.is_empty());
-                assert!(buffer.len() <= 128);
+        assert!(buffer.len() <= 128);
     }
 
+    /// Verifies: REQ-SER-021
     #[test]
     fn test_buffer_as_bytes() {
         let mut buffer = TelemetryBuffer::<128>::new();
@@ -218,6 +223,7 @@ mod tests {
         assert_eq!(bytes.len(), buffer.len());
     }
 
+    /// Verifies: REQ-SER-021
     #[test]
     fn test_buffer_clear() {
         let mut buffer = TelemetryBuffer::<128>::new();
@@ -254,6 +260,7 @@ mod tests {
         writer.count
     }
 
+    /// Verifies: REQ-SER-021
     #[test]
     fn test_len_independent_of_capacity() {
         let msg = ControlTelemetry::new(1000, 10.0, 9.5, 2.5, 0.5);
@@ -265,6 +272,7 @@ mod tests {
         assert_eq!(small.as_bytes(), large.as_bytes());
     }
 
+    /// Verifies: REQ-SER-021
     #[test]
     fn test_len_matches_bytes_written() {
         let msg = ControlTelemetry::new(1000, 10.0, 9.5, 2.5, 0.5);
@@ -273,6 +281,7 @@ mod tests {
         assert_eq!(buffer.len(), encoded_len(&msg));
     }
 
+    /// Verifies: REQ-SER-001, REQ-SER-021
     #[test]
     fn test_as_bytes_has_no_trailing_padding() {
         let msg = ControlTelemetry::new(1000, 10.0, 9.5, 2.5, 0.5);
@@ -289,6 +298,7 @@ mod tests {
         assert_eq!(decoder.position(), bytes.len());
     }
 
+    /// Verifies: REQ-SER-021
     #[test]
     fn test_reencode_shorter_message_shrinks_len() {
         let long = ControlTelemetry::new(u64::MAX, 10.0, 9.5, 2.5, 0.5);
@@ -301,6 +311,7 @@ mod tests {
         assert!(encoded_len(&short) < encoded_len(&long));
     }
 
+    /// Verifies: REQ-SER-022
     #[test]
     fn test_buffer_overflow() {
         let mut buffer = TelemetryBuffer::<4>::new();
@@ -312,6 +323,7 @@ mod tests {
         assert!(buffer.as_bytes().is_empty());
     }
 
+    /// Verifies: REQ-SER-021, REQ-SER-022
     #[test]
     fn test_buffer_overflow_boundary() {
         let msg = ControlTelemetry::new(1000, 10.0, 9.5, 2.5, 0.5);
@@ -336,6 +348,7 @@ mod tests {
         assert!(minicbor::encode(msg, short).is_err_and(|e| e.is_write()));
     }
 
+    /// Verifies: REQ-SER-022
     #[test]
     fn test_overflow_after_success_resets_len() {
         let short = ControlTelemetry::new(0, 0.0, 0.0, 0.0, 0.0);
@@ -363,10 +376,87 @@ mod tests {
         }
     }
 
+    /// Verifies: REQ-SER-021
     #[test]
     fn test_non_write_error_is_encode_error() {
         let mut buffer = TelemetryBuffer::<128>::new();
-        assert_eq!(buffer.encode(&FailingMessage), Err(BufferError::EncodeError));
+        assert_eq!(
+            buffer.encode(&FailingMessage),
+            Err(BufferError::EncodeError)
+        );
         assert!(buffer.is_empty());
+    }
+
+    /// Encoded size of `EXACT_MSG`: array head (1) + `u16` timestamp 1000
+    /// (3) + four `f32` values (5 each). Checked against the counting oracle.
+    const EXACT_LEN: usize = 24;
+
+    fn exact_msg() -> ControlTelemetry {
+        ControlTelemetry::new(1000, 10.0, 9.5, 2.5, 0.5)
+    }
+
+    /// Boundary: a buffer whose capacity is exactly the encoded size holds
+    /// the message completely (`len == SIZE`, bytes decode back).
+    /// Verifies: REQ-SER-021
+    #[test]
+    fn test_encode_at_exact_capacity() {
+        let msg = exact_msg();
+        assert_eq!(encoded_len(&msg), EXACT_LEN);
+        let mut buffer = TelemetryBuffer::<EXACT_LEN>::new();
+        assert_eq!(buffer.encode(&msg), Ok(()));
+        assert_eq!(buffer.len(), EXACT_LEN);
+        assert_eq!(buffer.len(), buffer.capacity());
+        let decoded: ControlTelemetry = minicbor::decode(buffer.as_bytes()).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    /// Boundary: one byte below the encoded size (`SIZE = N - 1`) is an
+    /// overflow and leaves the buffer empty, also when it held a previous
+    /// message that did fit.
+    /// Verifies: REQ-SER-022
+    #[test]
+    fn test_encode_one_byte_short_overflows() {
+        let msg = exact_msg();
+        assert_eq!(encoded_len(&msg), EXACT_LEN);
+        let mut buffer = TelemetryBuffer::<{ EXACT_LEN - 1 }>::new();
+        let fits = ControlTelemetry::new(0, 0.0, 0.0, 0.0, 0.0);
+        assert!(encoded_len(&fits) < EXACT_LEN - 1);
+        buffer.encode(&fits).unwrap();
+        assert!(!buffer.is_empty());
+        assert_eq!(buffer.encode(&msg), Err(BufferError::BufferOverflow));
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.len(), 0);
+        assert!(buffer.as_bytes().is_empty());
+    }
+
+    /// Boundary: a zero-capacity buffer cannot hold even a one-byte message
+    /// and reports overflow with an empty buffer.
+    /// Verifies: REQ-SER-021, REQ-SER-022
+    #[test]
+    fn test_zero_capacity_buffer() {
+        let mut buffer = TelemetryBuffer::<0>::new();
+        assert_eq!(buffer.capacity(), 0);
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.encode(&0u8), Err(BufferError::BufferOverflow));
+        assert!(buffer.is_empty());
+        assert!(buffer.as_bytes().is_empty());
+    }
+
+    /// Fixed-size storage: `TelemetryBuffer<N>` is a plain value whose size
+    /// is a compile-time constant of at least `N` bytes (the inline array),
+    /// with capacity `N`, and `Default` gives the same empty buffer as `new`.
+    /// Verifies: REQ-SER-021
+    #[test]
+    fn test_fixed_size_storage_and_default() {
+        // Evaluated at compile time: a violation fails the build.
+        const SMALL: usize = core::mem::size_of::<TelemetryBuffer<16>>();
+        const LARGE: usize = core::mem::size_of::<TelemetryBuffer<256>>();
+        const _: () = assert!(SMALL >= 16 && LARGE >= 256);
+        assert_eq!(LARGE - SMALL, 240);
+        let buffer: TelemetryBuffer<16> = TelemetryBuffer::default();
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.len(), 0);
+        assert_eq!(buffer.capacity(), 16);
+        assert!(buffer.as_bytes().is_empty());
     }
 }

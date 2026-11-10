@@ -84,6 +84,7 @@ mod tests {
         const NAME: &'static str = "DataEvent";
     }
 
+    /// Verifies: REQ-FSM-003
     #[test]
     fn test_event_with_data() {
         let e1 = DataEvent::Threshold(1.25);

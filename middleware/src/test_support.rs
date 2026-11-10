@@ -16,7 +16,11 @@ pub(crate) const EPSILON: f32 = 1e-5;
 /// Returns `true` when `actual` is within [`EPSILON`] of `expected`, where the
 /// tolerance is relative (`EPSILON * |expected|`) for `|expected| > 1`.
 pub(crate) fn approx_eq(actual: f32, expected: f32) -> bool {
-    let scale = if expected.abs() > 1.0 { expected.abs() } else { 1.0 };
+    let scale = if expected.abs() > 1.0 {
+        expected.abs()
+    } else {
+        1.0
+    };
     (actual - expected).abs() <= EPSILON * scale
 }
 

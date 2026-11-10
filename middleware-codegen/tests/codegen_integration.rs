@@ -26,7 +26,13 @@ use middleware_codegen::middleware_model_inline;
 /// property under test; comparing bit patterns states that without a float
 /// `==`.
 fn assert_exact(actual: f32, expected: f32) {
-    assert_eq!(actual.to_bits(), expected.to_bits(), "{} != {}", actual, expected);
+    assert_eq!(
+        actual.to_bits(),
+        expected.to_bits(),
+        "{} != {}",
+        actual,
+        expected
+    );
 }
 
 // Test basic enum generation
@@ -46,6 +52,7 @@ types:
 "#
 }
 
+/// Verifies: REQ-GEN-010, REQ-GEN-011
 #[test]
 fn test_enum_generation() {
     use test_enums::TestState;
@@ -91,6 +98,7 @@ types:
 "#
 }
 
+/// Verifies: REQ-GEN-011
 #[test]
 fn test_struct_generation() {
     use test_structs::SensorData;
@@ -122,14 +130,12 @@ messages:
 "#
 }
 
+/// Verifies: REQ-GEN-011
 #[test]
 fn test_message_generation() {
     use test_messages::Command;
 
-    let cmd = Command {
-        id: 42,
-        value: 2.5,
-    };
+    let cmd = Command { id: 42, value: 2.5 };
 
     assert_eq!(cmd.id, 42);
     assert_exact(cmd.value, 2.5);
@@ -165,6 +171,7 @@ math_blocks:
 "#
 }
 
+/// Verifies: REQ-GEN-003, REQ-GEN-011
 #[test]
 fn test_math_block_generation() {
     // Verify PID constants
@@ -230,10 +237,11 @@ state_machines:
 "#
 }
 
+/// Verifies: REQ-GEN-002, REQ-GEN-011, REQ-FSM-002
 #[test]
 fn test_state_machine_generation() {
-    use test_fsm::{Event, State};
     use test_fsm::Controller;
+    use test_fsm::{Event, State};
 
     // Verify initial state
     assert_eq!(Controller::INITIAL_STATE, State::Idle);
@@ -260,8 +268,14 @@ fn test_state_machine_generation() {
     assert_eq!(next, Some(State::Idle));
 
     // Enter/exit lookups follow the model
-    assert_eq!(Controller::on_enter(State::Idle), Some(Controller::Action::ResetController));
-    assert_eq!(Controller::on_exit(State::Running), Some(Controller::Action::StopControl));
+    assert_eq!(
+        Controller::on_enter(State::Idle),
+        Some(Controller::Action::ResetController)
+    );
+    assert_eq!(
+        Controller::on_exit(State::Running),
+        Some(Controller::Action::StopControl)
+    );
     assert_eq!(Controller::on_exit(State::Idle), None);
 
     // Test non-existent transition
@@ -284,6 +298,7 @@ requirements:
 "#
 }
 
+/// Verifies: REQ-GEN-013
 #[test]
 fn test_traceability_generation() {
     use test_trace::traceability;
@@ -293,8 +308,14 @@ fn test_traceability_generation() {
     assert_eq!(traceability::REQUIREMENT_IDS[0], "REQ-TRACE-001");
     assert_eq!(traceability::REQUIREMENT_IDS[1], "REQ-TRACE-002");
 
-    assert_eq!(traceability::REQUIREMENT_DESCRIPTIONS[0], "First requirement");
-    assert_eq!(traceability::REQUIREMENT_DESCRIPTIONS[1], "Second requirement");
+    assert_eq!(
+        traceability::REQUIREMENT_DESCRIPTIONS[0],
+        "First requirement"
+    );
+    assert_eq!(
+        traceability::REQUIREMENT_DESCRIPTIONS[1],
+        "Second requirement"
+    );
 
     assert_eq!(traceability::REQUIREMENT_LEVELS[0], "C");
     assert_eq!(traceability::REQUIREMENT_LEVELS[1], "B");
@@ -344,6 +365,7 @@ math_blocks:
 "#
 }
 
+/// Verifies: REQ-GEN-010, REQ-GEN-011, REQ-GEN-013
 #[test]
 fn test_complete_model() {
     use complete_model::{Config, Mode, Status};
@@ -376,7 +398,10 @@ fn test_complete_model() {
 
     // Test traceability
     assert_eq!(complete_model::traceability::REQUIREMENT_COUNT, 1);
-    assert_eq!(complete_model::traceability::REQUIREMENT_IDS[0], "REQ-COMP-001");
+    assert_eq!(
+        complete_model::traceability::REQUIREMENT_IDS[0],
+        "REQ-COMP-001"
+    );
 }
 
 // Test guards, transition actions and enter/exit hooks
@@ -461,7 +486,13 @@ struct Recorder {
 
 impl Recorder {
     fn new(preflight_ok: bool, lockout: bool) -> Self {
-        Self { preflight_ok, lockout, fail_on: None, log: [None; 8], len: 0 }
+        Self {
+            preflight_ok,
+            lockout,
+            fail_on: None,
+            log: [None; 8],
+            len: 0,
+        }
     }
 
     fn record(&mut self, call: Call) -> Result<(), &'static str> {
@@ -511,6 +542,7 @@ impl test_hooks::Flight::Hooks for Recorder {
 }
 
 /// REQ-FSM-011: a false guard blocks the transition and runs no actions.
+/// Verifies: REQ-GEN-011, REQ-FSM-011, REQ-FSM-024
 #[test]
 fn test_fsm_guard_false_blocks_transition() {
     use test_hooks::{Cmd, Flight, Mode};
@@ -523,6 +555,7 @@ fn test_fsm_guard_false_blocks_transition() {
 }
 
 /// REQ-FSM-011: rows are tried in order; the first passing guard wins.
+/// Verifies: REQ-FSM-011, REQ-FSM-024
 #[test]
 fn test_fsm_guard_selects_first_passing_row() {
     use test_hooks::{Cmd, Flight, Mode};
@@ -530,7 +563,13 @@ fn test_fsm_guard_selects_first_passing_row() {
     let mut hooks = Recorder::new(false, true);
     let (state, outcome) = Flight::step(Mode::Idle, Cmd::Arm, &mut hooks).unwrap();
     assert_eq!(state, Mode::Locked);
-    assert_eq!(outcome, Flight::Outcome::Transitioned { from: Mode::Idle, to: Mode::Locked });
+    assert_eq!(
+        outcome,
+        Flight::Outcome::Transitioned {
+            from: Mode::Idle,
+            to: Mode::Locked
+        }
+    );
     assert_eq!(hooks.calls(), vec![Call::LeaveIdle, Call::EnterLocked]);
 
     let mut hooks = Recorder::new(true, true);
@@ -539,6 +578,7 @@ fn test_fsm_guard_selects_first_passing_row() {
 }
 
 /// REQ-FSM-002, REQ-FSM-012: exit, transition action, then enter, in order.
+/// Verifies: REQ-FSM-002, REQ-FSM-012
 #[test]
 fn test_fsm_actions_run_exit_action_enter_in_order() {
     use test_hooks::{Cmd, Flight, Mode};
@@ -546,8 +586,17 @@ fn test_fsm_actions_run_exit_action_enter_in_order() {
     let mut hooks = Recorder::new(true, false);
     let (state, outcome) = Flight::step(Mode::Idle, Cmd::Arm, &mut hooks).unwrap();
     assert_eq!(state, Mode::Armed);
-    assert_eq!(outcome, Flight::Outcome::Transitioned { from: Mode::Idle, to: Mode::Armed });
-    assert_eq!(hooks.calls(), vec![Call::LeaveIdle, Call::SpinUp, Call::EnterArmed]);
+    assert_eq!(
+        outcome,
+        Flight::Outcome::Transitioned {
+            from: Mode::Idle,
+            to: Mode::Armed
+        }
+    );
+    assert_eq!(
+        hooks.calls(),
+        vec![Call::LeaveIdle, Call::SpinUp, Call::EnterArmed]
+    );
 
     let (state, _) = Flight::step(state, Cmd::Launch, &mut hooks).unwrap();
     assert_eq!(state, Mode::Flying);
@@ -570,6 +619,7 @@ fn test_fsm_actions_run_exit_action_enter_in_order() {
 }
 
 /// Events with no matching row are ignored and run no hooks.
+/// Verifies: REQ-FSM-024
 #[test]
 fn test_fsm_unmatched_event_is_ignored() {
     use test_hooks::{Cmd, Flight, Mode};
@@ -582,6 +632,7 @@ fn test_fsm_unmatched_event_is_ignored() {
 }
 
 /// A failing hook stops the transition and reports which phase failed.
+/// Verifies: REQ-FSM-002, REQ-FSM-012
 #[test]
 fn test_fsm_hook_failure_reports_phase() {
     use test_hooks::{Cmd, Flight, Mode};
@@ -604,6 +655,7 @@ fn test_fsm_hook_failure_reports_phase() {
 }
 
 /// REQ-FSM-013: guards and actions are recorded in the const table.
+/// Verifies: REQ-FSM-011, REQ-FSM-012
 #[test]
 fn test_fsm_table_carries_guards_and_actions() {
     use test_hooks::Flight;

@@ -172,11 +172,17 @@ pub trait PortMessage: Sized {
 }
 
 // test code: a panic is a test failure, which is the intended reporting mechanism
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing))]
+#[cfg_attr(
+    test,
+    allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Five-byte message: little-endian `u32` followed by a flag byte that
+    /// must be 0 or 1. Any other flag byte is a decoding error, which lets
+    /// the tests inject an invalid payload of the right length.
     #[derive(Debug, Clone, PartialEq)]
     struct TestMessage {
         value: u32,
@@ -198,7 +204,11 @@ mod tests {
             match buffer {
                 [a, b, c, d, flag, ..] => Ok(Self {
                     value: u32::from_le_bytes([*a, *b, *c, *d]),
-                    flag: *flag != 0,
+                    flag: match flag {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(SerializationError::DecodingError),
+                    },
                 }),
                 _ => Err(SerializationError::InvalidFormat),
             }
@@ -209,6 +219,86 @@ mod tests {
         }
     }
 
+    /// Serializes then deserializes through the trait only, as generic
+    /// port code does.
+    fn roundtrip_generic<M: PortMessage>(msg: &M) -> Result<M, SerializationError> {
+        let mut buffer = [0u8; MAX_MESSAGE_SIZE];
+        let written = msg.serialize(&mut buffer)?;
+        let bytes = buffer
+            .get(..written)
+            .ok_or(SerializationError::BufferTooSmall)?;
+        M::deserialize(bytes)
+    }
+
+    /// A `PortMessage` serializes into and deserializes from a plain byte
+    /// buffer, and the round trip is lossless at the value boundaries.
+    ///
+    /// Verifies: REQ-PRT-001
+    #[test]
+    fn roundtrip_boundary_values() {
+        for value in [0, 1, u32::MAX - 1, u32::MAX] {
+            for flag in [false, true] {
+                let msg = TestMessage { value, flag };
+                assert_eq!(roundtrip_generic(&msg), Ok(msg));
+            }
+        }
+        // Serializing into a buffer of exactly max_size() succeeds.
+        let mut exact = [0u8; 5];
+        assert_eq!(
+            TestMessage {
+                value: 7,
+                flag: true
+            }
+            .serialize(&mut exact),
+            Ok(TestMessage::max_size())
+        );
+        assert_eq!(exact, [7, 0, 0, 0, 1]);
+    }
+
+    /// Both trait methods return `Result`, checked at compile time by
+    /// binding them to function-pointer types, and every injected fault
+    /// (empty buffer, one byte short, invalid payload) comes back as an
+    /// `Err` value rather than a panic or a garbage message.
+    ///
+    /// Verifies: REQ-PRT-002
+    #[test]
+    fn serialization_faults_return_err() {
+        let _serialize: fn(&TestMessage, &mut [u8]) -> Result<usize, SerializationError> =
+            TestMessage::serialize;
+        let _deserialize: fn(&[u8]) -> Result<TestMessage, SerializationError> =
+            TestMessage::deserialize;
+
+        let msg = TestMessage {
+            value: 1,
+            flag: false,
+        };
+        assert_eq!(
+            msg.serialize(&mut []),
+            Err(SerializationError::BufferTooSmall)
+        );
+        assert_eq!(
+            msg.serialize(&mut [0u8; 4]),
+            Err(SerializationError::BufferTooSmall)
+        );
+
+        assert_eq!(
+            TestMessage::deserialize(&[]),
+            Err(SerializationError::InvalidFormat)
+        );
+        assert_eq!(
+            TestMessage::deserialize(&[0u8; 4]),
+            Err(SerializationError::InvalidFormat)
+        );
+        assert_eq!(
+            TestMessage::deserialize(&[0, 0, 0, 0, 2]),
+            Err(SerializationError::DecodingError)
+        );
+        assert_eq!(
+            TestMessage::deserialize(&[0, 0, 0, 0, 0xFF]),
+            Err(SerializationError::DecodingError)
+        );
+    }
+
     #[test]
     fn serialize_success() {
         let msg = TestMessage {
@@ -217,7 +307,9 @@ mod tests {
         };
 
         let mut buffer = [0u8; 256];
-        let size = msg.serialize(&mut buffer).expect("Serialization should succeed");
+        let size = msg
+            .serialize(&mut buffer)
+            .expect("Serialization should succeed");
 
         assert_eq!(size, 5);
         assert_eq!(buffer[0..4], 42u32.to_le_bytes());
@@ -254,6 +346,7 @@ mod tests {
         assert_eq!(result, Err(SerializationError::InvalidFormat));
     }
 
+    /// Verifies: REQ-PRT-001
     #[test]
     fn roundtrip() {
         let original = TestMessage {
@@ -275,6 +368,7 @@ mod tests {
 
     #[test]
     fn default_max_size() {
+        #[derive(Debug, PartialEq)]
         struct DefaultSizeMsg;
 
         impl PortMessage for DefaultSizeMsg {
@@ -288,5 +382,6 @@ mod tests {
         }
 
         assert_eq!(DefaultSizeMsg::max_size(), MAX_MESSAGE_SIZE);
+        assert_eq!(roundtrip_generic(&DefaultSizeMsg), Ok(DefaultSizeMsg));
     }
 }

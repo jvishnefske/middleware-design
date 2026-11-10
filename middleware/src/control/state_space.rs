@@ -6,6 +6,8 @@
 //! - REQ-CTL-030: Discrete-time state-space model
 //! - REQ-CTL-031: State-space supports const generic dimensions (N states, M inputs, P outputs)
 //! - REQ-CTL-032: State-space uses nalgebra for matrix operations
+//! - REQ-CTL-004: Non-finite inputs, invalid time steps and non-finite
+//!   outputs or states are reported as errors
 
 use super::{ControlBlock, ControlError};
 use nalgebra::{SMatrix, SVector};
@@ -31,6 +33,18 @@ use nalgebra::{SMatrix, SVector};
 /// - `N`: Number of states
 /// - `M`: Number of inputs
 /// - `P`: Number of outputs
+///
+/// # Errors
+/// `update` returns `InvalidInput` if any input element is not finite,
+/// `InvalidDelta` if `dt` is zero, negative or non-finite, and
+/// `NumericalError` if any element of the output `y[k]` or of the next state
+/// `x[k+1]` is not finite (overflow, or NaN in a matrix). The model is
+/// discrete-time: `dt` is validated but not used, since the matrices
+/// already encode the sample period.
+///
+/// # Reset
+/// [`ControlBlock::reset`] sets the state to zero, not to the
+/// `initial_state` passed to [`DiscreteStateSpace::new`].
 ///
 /// # Examples
 ///
@@ -208,12 +222,14 @@ impl<const N: usize, const M: usize, const P: usize> ControlBlock for DiscreteSt
 }
 
 // test code: a panic is a test failure, which is the intended reporting mechanism
-#[cfg_attr(test, allow(clippy::unwrap_used))]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::block::fault_vectors::{BAD_DT, NON_FINITE, TINY_DT};
     use crate::test_support::assert_close;
 
+    /// Verifies: REQ-CTL-030, REQ-CTL-032
     #[test]
     fn test_state_space_new() {
         let a = SMatrix::<f32, 1, 1>::identity();
@@ -231,6 +247,7 @@ mod tests {
         assert_eq!(ss.state(), x0);
     }
 
+    /// Verifies: REQ-CTL-030
     #[test]
     fn test_integrator() {
         // Simple integrator: x[k+1] = x[k] + u[k] * dt
@@ -263,6 +280,7 @@ mod tests {
         assert_close(ss.state().x, 2.0);
     }
 
+    /// Verifies: REQ-CTL-030
     #[test]
     fn test_feedthrough() {
         // System with feedthrough: y = x + u
@@ -281,6 +299,7 @@ mod tests {
         assert_close(output.x, 8.0);
     }
 
+    /// Verifies: REQ-CTL-030, REQ-CTL-031
     #[test]
     fn test_multi_state() {
         // 2-state system
@@ -309,6 +328,7 @@ mod tests {
         assert_close(state.y, 1.0);
     }
 
+    /// Verifies: REQ-CTL-002
     #[test]
     fn test_reset() {
         let a = SMatrix::<f32, 1, 1>::identity();
@@ -330,6 +350,7 @@ mod tests {
         assert_eq!(ss.state(), SVector::<f32, 1>::zeros());
     }
 
+    /// Verifies: REQ-CTL-004
     #[test]
     fn test_invalid_input() {
         let a = SMatrix::<f32, 1, 1>::identity();
@@ -353,6 +374,7 @@ mod tests {
         );
     }
 
+    /// Verifies: REQ-CTL-004
     #[test]
     fn test_invalid_delta() {
         let a = SMatrix::<f32, 1, 1>::identity();
@@ -373,5 +395,137 @@ mod tests {
             ss.update(input, -0.01).unwrap_err(),
             ControlError::InvalidDelta
         );
+    }
+
+    fn scalar(a: f32, b: f32, c: f32, d: f32, x0: f32) -> DiscreteStateSpace<1, 1, 1> {
+        DiscreteStateSpace::new(
+            SMatrix::<f32, 1, 1>::new(a),
+            SMatrix::<f32, 1, 1>::new(b),
+            SMatrix::<f32, 1, 1>::new(c),
+            SMatrix::<f32, 1, 1>::new(d),
+            SVector::<f32, 1>::new(x0),
+        )
+    }
+
+    /// A non-finite value in any input element is rejected; every invalid
+    /// dt is rejected and the smallest positive normal dt is accepted.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_rejects_all_invalid_classes() {
+        let ss = DiscreteStateSpace::<1, 2, 1>::new(
+            SMatrix::<f32, 1, 1>::identity(),
+            SMatrix::<f32, 1, 2>::new(1.0, 1.0),
+            SMatrix::<f32, 1, 1>::identity(),
+            SMatrix::<f32, 1, 2>::zeros(),
+            SVector::<f32, 1>::zeros(),
+        );
+        for bad in NON_FINITE {
+            for u in [
+                SVector::<f32, 2>::new(bad, 0.0),
+                SVector::<f32, 2>::new(0.0, bad),
+            ] {
+                assert_eq!(ss.update(u, 0.01).unwrap_err(), ControlError::InvalidInput);
+            }
+        }
+        let u = SVector::<f32, 2>::new(1.0, 1.0);
+        for dt in BAD_DT {
+            assert_eq!(
+                ss.update(u, dt).unwrap_err(),
+                ControlError::InvalidDelta,
+                "dt = {dt}"
+            );
+        }
+        assert!(ss.update(u, TINY_DT).is_ok());
+    }
+
+    /// Output overflow (y = C x with C = 2, x = MAX) is reported.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_output_overflow_is_numerical_error() {
+        let ss = scalar(1.0, 0.0, 2.0, 0.0, f32::MAX);
+        assert_eq!(
+            ss.update(SVector::<f32, 1>::new(0.0), 0.01).unwrap_err(),
+            ControlError::NumericalError
+        );
+    }
+
+    /// State overflow (x[k+1] = 2 x[k] with x = MAX) is reported even
+    /// though the output for this step (C = 0) is finite.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_state_overflow_is_numerical_error() {
+        let ss = scalar(2.0, 0.0, 0.0, 0.0, f32::MAX);
+        assert_eq!(
+            ss.update(SVector::<f32, 1>::new(0.0), 0.01).unwrap_err(),
+            ControlError::NumericalError
+        );
+    }
+
+    /// A NaN in a system matrix makes the result NaN, which is reported.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_nan_matrix_is_numerical_error() {
+        let u = SVector::<f32, 1>::new(1.0);
+        assert_eq!(
+            scalar(1.0, 1.0, 1.0, f32::NAN, 0.0)
+                .update(u, 0.01)
+                .unwrap_err(),
+            ControlError::NumericalError
+        );
+        assert_eq!(
+            scalar(1.0, f32::NAN, 1.0, 0.0, 0.0)
+                .update(u, 0.01)
+                .unwrap_err(),
+            ControlError::NumericalError
+        );
+    }
+
+    /// N, M and P are independent const generics: a 3-state, 2-input,
+    /// 4-output model compiles, and its input, output and state have those
+    /// sizes (checked at runtime and via `size_of`).
+    /// Verifies: REQ-CTL-031
+    #[test]
+    fn test_const_generic_dimensions() {
+        let ss = DiscreteStateSpace::<3, 2, 4>::new(
+            SMatrix::<f32, 3, 3>::identity(),
+            SMatrix::<f32, 3, 2>::from_element(1.0),
+            SMatrix::<f32, 4, 3>::from_element(1.0),
+            SMatrix::<f32, 4, 2>::zeros(),
+            SVector::<f32, 3>::zeros(),
+        );
+        let (ss, y) = ss.update(SVector::<f32, 2>::new(1.0, 2.0), 0.01).unwrap();
+        assert_eq!(y.len(), 4);
+        assert_eq!(ss.state().len(), 3);
+        assert_eq!(ss.state(), SVector::<f32, 3>::from_element(3.0));
+        assert_eq!(
+            core::mem::size_of::<DiscreteStateSpace<3, 2, 4>>(),
+            core::mem::size_of::<f32>() * (3 * 3 + 3 * 2 + 4 * 3 + 4 * 2 + 3)
+        );
+    }
+
+    /// The model's API is typed with nalgebra `SMatrix`/`SVector` (bound to
+    /// explicit function-pointer types, so a change of type fails to
+    /// compile), and its results equal the same products computed directly
+    /// with nalgebra.
+    /// Verifies: REQ-CTL-032
+    #[test]
+    fn test_nalgebra_typed_api() {
+        type Ss = DiscreteStateSpace<2, 1, 2>;
+        let _a: fn(&Ss) -> SMatrix<f32, 2, 2> = Ss::a;
+        let _b: fn(&Ss) -> SMatrix<f32, 2, 1> = Ss::b;
+        let _c: fn(&Ss) -> SMatrix<f32, 2, 2> = Ss::c;
+        let _d: fn(&Ss) -> SMatrix<f32, 2, 1> = Ss::d;
+        let _x: fn(&Ss) -> SVector<f32, 2> = Ss::state;
+
+        let a = SMatrix::<f32, 2, 2>::new(0.5, 0.25, -0.125, 1.0);
+        let b = SMatrix::<f32, 2, 1>::new(1.0, 2.0);
+        let c = SMatrix::<f32, 2, 2>::new(1.0, 0.0, 0.5, 0.5);
+        let d = SMatrix::<f32, 2, 1>::new(0.0, 1.0);
+        let x0 = SVector::<f32, 2>::new(1.0, -1.0);
+        let u = SVector::<f32, 1>::new(0.5);
+        let ss = Ss::new(a, b, c, d, x0);
+        let (ss, y) = ss.update(u, 0.01).unwrap();
+        assert_eq!(y, c * x0 + d * u);
+        assert_eq!(ss.state(), a * x0 + b * u);
     }
 }

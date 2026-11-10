@@ -65,7 +65,10 @@
 //! - REQ-FSM-021, REQ-FSM-022: event processing and transition results
 
 // test code: a panic is a test failure, which is the intended reporting mechanism
-#![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing))]
+#![cfg_attr(
+    test,
+    allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)
+)]
 
 use std::cell::RefCell;
 use std::sync::OnceLock;
@@ -88,8 +91,14 @@ const DOOR_YAML: &str = include_str!("fixtures/b2b_door.yaml");
 const DUP_YAML: &str = include_str!("fixtures/b2b_duplicate_rows.yaml");
 
 /// Every outcome kind, for models whose hooks can produce all of them.
-const ALL_KINDS: &[&str] =
-    &["transitioned", "remained", "ignored", "exit_failed", "action_failed", "entry_failed"];
+const ALL_KINDS: &[&str] = &[
+    "transitioned",
+    "remained",
+    "ignored",
+    "exit_failed",
+    "action_failed",
+    "entry_failed",
+];
 
 /// Proptest cases per model for the lockstep property.
 const CASES: u32 = 1024;
@@ -138,7 +147,9 @@ fn text(v: &Value) -> String {
 }
 
 fn position(list: &[String], name: &str) -> usize {
-    list.iter().position(|n| n == name).unwrap_or_else(|| panic!("unknown name {name}"))
+    list.iter()
+        .position(|n| n == name)
+        .unwrap_or_else(|| panic!("unknown name {name}"))
 }
 
 fn intern(list: &mut Vec<String>, name: &str) -> usize {
@@ -200,7 +211,16 @@ impl Spec {
             .collect();
         let initial = position(&states, fsm["initial_state"].as_str().expect("initial"));
         assert!(guards.len() <= MAX_HOOKS && actions.len() <= MAX_HOOKS);
-        Spec { states, events, guards, actions, initial, rows, on_enter, on_exit }
+        Spec {
+            states,
+            events,
+            guards,
+            actions,
+            initial,
+            rows,
+            on_enter,
+            on_exit,
+        }
     }
 }
 
@@ -310,7 +330,11 @@ type StepInput = (usize, u16, Option<usize>);
 
 fn steps_strategy() -> impl Strategy<Value = Vec<StepInput>> {
     prop::collection::vec(
-        (0..64usize, any::<u16>(), prop::option::weighted(0.1, 0..64usize)),
+        (
+            0..64usize,
+            any::<u16>(),
+            prop::option::weighted(0.1, 0..64usize),
+        ),
         0..64,
     )
 }
@@ -515,6 +539,7 @@ macro_rules! back_to_back {
                 Ok(coverage)
             }
 
+            /// Verifies: REQ-GEN-016, REQ-GEN-002, REQ-FSM-002, REQ-FSM-011, REQ-FSM-012
             #[test]
             fn table_matches_yaml() {
                 let s = spec();
@@ -555,12 +580,14 @@ macro_rules! back_to_back {
             proptest! {
                 #![proptest_config(ProptestConfig::with_cases(CASES))]
 
+                /// Verifies: REQ-GEN-016, REQ-FSM-002, REQ-FSM-011, REQ-FSM-012, REQ-FSM-024
                 #[test]
                 fn generated_matches_runtime(steps in steps_strategy()) {
                     lockstep(&steps)?;
                 }
             }
 
+            /// Verifies: REQ-GEN-016, REQ-FSM-024
             #[test]
             fn lockstep_covers_every_row() {
                 let mut runner = proptest::test_runner::TestRunner::deterministic();
@@ -646,6 +673,7 @@ back_to_back! {
         /// passing row wins, and all guards false gives `Remained`. Both
         /// implementations must agree at every step, and the expected row
         /// must fire.
+        /// Verifies: REQ-GEN-016, REQ-FSM-024
         #[test]
         fn fallthrough_agrees() {
             let go = event_sel(DupEvent::Go);

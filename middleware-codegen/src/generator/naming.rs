@@ -73,7 +73,10 @@ pub fn pascal_ident(name: &str, what: &str) -> Result<Ident, String> {
     } else if is_snake_case(name) {
         Ok(format_ident!("{}", to_pascal_case(name)))
     } else {
-        Err(format!("{} name '{}' must be snake_case or PascalCase", what, name))
+        Err(format!(
+            "{} name '{}' must be snake_case or PascalCase",
+            what, name
+        ))
     }
 }
 
@@ -113,7 +116,10 @@ mod tests {
     fn ident_validation() {
         assert!(snake_ident("ok_name", "guard").is_ok());
         assert!(snake_ident("BadName", "guard").is_err());
-        assert_eq!(pascal_ident("reset_fault", "command").unwrap(), "ResetFault");
+        assert_eq!(
+            pascal_ident("reset_fault", "command").unwrap(),
+            "ResetFault"
+        );
         assert_eq!(pascal_ident("Arm", "command").unwrap(), "Arm");
         assert!(pascal_ident("bad-name", "command").is_err());
     }

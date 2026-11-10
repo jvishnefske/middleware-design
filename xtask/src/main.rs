@@ -13,17 +13,24 @@
 //! fails if `docs/traceability.md` differs from what would be generated, and
 //! exits 1 when any problem is found.
 //!
-//! Exit codes: 0 success, 1 traceability problems (check mode), 2 usage or
-//! I/O error.
+//! `cargo xtask coverage` runs `cargo llvm-cov --branch` on the pinned
+//! nightly (via `rustup run`) for the measured packages, writes the JSON
+//! summary and an HTML report under `target/coverage/`, prints the files that
+//! still have uncovered branches, and exits 1 if the totals fall below the
+//! thresholds in [`coverage`].
+//!
+//! Exit codes: 0 success, 1 traceability problems (check mode) or coverage
+//! below threshold, 2 usage, I/O or tool error.
 
 mod cli;
+mod coverage;
 mod trace;
 
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{self, ExitCode};
 
 use cli::{Command, TraceMode, UsageError};
 use trace::{report, requirements, tests_scan, Problem, ScanResult};
@@ -44,6 +51,8 @@ enum XtaskError {
     Io { path: PathBuf, source: io::Error },
     NoWorkspaceRoot,
     TooDeep(PathBuf),
+    Tool { what: String, detail: String },
+    Coverage(coverage::CoverageError),
 }
 
 impl fmt::Display for XtaskError {
@@ -57,6 +66,8 @@ impl fmt::Display for XtaskError {
                 "{}: directory nesting exceeds {MAX_DEPTH} levels",
                 path.display()
             ),
+            Self::Tool { what, detail } => write!(f, "{what} failed: {detail}"),
+            Self::Coverage(e) => write!(f, "{e}"),
         }
     }
 }
@@ -88,6 +99,7 @@ fn run(args: &[String]) -> Result<ExitCode, XtaskError> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Trace(mode) => run_trace(&workspace_root()?, mode),
+        Command::Coverage => run_coverage(&workspace_root()?),
     }
 }
 
@@ -210,4 +222,107 @@ fn relative(root: &Path, file: &Path) -> String {
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// Runs one `cargo llvm-cov` step on the pinned toolchain.
+fn llvm_cov(root: &Path, args: &[&str]) -> Result<(), XtaskError> {
+    let what = format!(
+        "rustup run {} cargo llvm-cov {}",
+        coverage::TOOLCHAIN,
+        args.join(" ")
+    );
+    println!("running: {what}");
+    let status = process::Command::new("rustup")
+        .args(["run", coverage::TOOLCHAIN, "cargo", "llvm-cov"])
+        .args(args)
+        .current_dir(root)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .status()
+        .map_err(|e| XtaskError::Tool {
+            what: what.clone(),
+            detail: e.to_string(),
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(XtaskError::Tool {
+            what,
+            detail: status.to_string(),
+        })
+    }
+}
+
+/// Measures coverage, writes the reports and applies the thresholds.
+fn run_coverage(root: &Path) -> Result<ExitCode, XtaskError> {
+    let packages: Vec<&str> = coverage::PACKAGES
+        .iter()
+        .flat_map(|p| ["--package", p])
+        .collect();
+    let out_dir = root.join(coverage::OUTPUT_DIR);
+    fs::create_dir_all(&out_dir).map_err(io_err(&out_dir))?;
+    let summary_path = out_dir.join("summary.json");
+    let summary_arg = summary_path.to_string_lossy().into_owned();
+    let out_arg = out_dir.to_string_lossy().into_owned();
+
+    llvm_cov(root, &["clean", "--workspace"])?;
+    llvm_cov(
+        root,
+        &[&["--branch", "--no-report"], packages.as_slice()].concat(),
+    )?;
+    llvm_cov(
+        root,
+        &[
+            &[
+                "report",
+                "--branch",
+                "--json",
+                "--summary-only",
+                "--output-path",
+                &summary_arg,
+            ],
+            packages.as_slice(),
+        ]
+        .concat(),
+    )?;
+    llvm_cov(
+        root,
+        &[
+            &["report", "--branch", "--html", "--output-dir", &out_arg],
+            packages.as_slice(),
+        ]
+        .concat(),
+    )?;
+
+    let json = fs::read_to_string(&summary_path).map_err(io_err(&summary_path))?;
+    let summary =
+        coverage::parse_summary(&json, &root.to_string_lossy()).map_err(XtaskError::Coverage)?;
+    let verdict = coverage::evaluate(&summary, coverage::THRESHOLDS);
+
+    for (path, missed, count) in &verdict.branch_gaps {
+        println!("  {path}: {missed} of {count} branches not covered");
+    }
+    println!(
+        "coverage: branches {} ({} of {}), lines {} ({} of {})",
+        coverage::percent(summary.branches.basis_points()),
+        summary.branches.covered,
+        summary.branches.count,
+        coverage::percent(summary.lines.basis_points()),
+        summary.lines.covered,
+        summary.lines.count,
+    );
+    println!(
+        "report: {}",
+        out_dir.join("html").join("index.html").display()
+    );
+    println!("summary: {}", summary_path.display());
+    if verdict.passed() {
+        println!("coverage gate passed");
+        Ok(ExitCode::SUCCESS)
+    } else {
+        for f in &verdict.failures {
+            eprintln!("  - {f}");
+        }
+        eprintln!("coverage gate FAILED");
+        Ok(ExitCode::FAILURE)
+    }
 }

@@ -32,7 +32,7 @@ Guards must be free of side effects, deterministic for a given system state, and
 
 Actions, entry hooks and exit hooks must complete in bounded time and must report failure through their `Error` type rather than by panicking. A panic on the target is a loss of the function.
 
-Every `Err` returned by `step` must be handled. On an exit, action or entry failure, `step` returns the error and the caller keeps its previous state value. Side effects already performed by an earlier hook in the same step (for example an exit hook that succeeded before an action failed) are not rolled back. The integrator must define the safe reaction (retry, transition to a safe state through a dedicated event, or report to a supervisor) and must ensure that any partially applied side effect is safe.
+Every `Err` returned by `step` must be handled. For the runtime `StateMachine`, `process` consumes the machine and an error does not return it; a caller that needs the previous state on error must clone the machine before calling `process`. On an exit, action or entry failure, `step` returns the error and the caller keeps its previous state value. Side effects already performed by an earlier hook in the same step (for example an exit hook that succeeded before an action failed) are not rolled back. The integrator must define the safe reaction (retry, transition to a safe state through a dedicated event, or report to a supervisor) and must ensure that any partially applied side effect is safe.
 
 An `Ignored` or `Remained` outcome is not an error. If an unexpected event must be treated as a fault for the item, the integrator must check for these outcomes explicitly.
 
@@ -42,11 +42,17 @@ Control blocks reject non-finite inputs and non-positive or non-finite time step
 
 PID integral clamping and output saturation bound the controller's output only within the configured limits. The integrator must choose limits that keep the actuator in a safe range, and must ensure that sensor plausibility checks happen before values reach a control block. Range checks on finite values are not performed by the library beyond the configured limits.
 
+Filter, limiter and PID configurations are validated: invalid limits or filter frequencies are rejected with `ControlError::InvalidConfig` and never cause a panic. `reset` sets a block's dynamic state to zero and keeps its configuration; it does not restore a non-zero initial output or initial state given at construction, so the integrator must re-create the block if that is required. Filters and state-space models use the sample rate fixed at configuration; the `dt` they receive is validated but not used, so the integrator must call them at the configured rate.
+
+Arithmetic on integer `Quantity` values follows the primitive type: it panics on overflow in debug builds and wraps in release builds. Integrators using integer quantities on safety paths must bound their ranges.
+
 Control blocks are immutable values. State is advanced only by using the block returned from `update`; discarding it and calling the old block again repeats the previous step. This is intended, and it allows rollback, but the integrator must not mix stale and current instances.
 
 ## 6. Obligations on ports and components
 
-Port reads and writes return `Result`. Errors such as a missing message or a full port must be handled by the component, and the component's reaction must be part of its reviewed design. Component lifecycle transitions are checked; an invalid transition returns `LifecycleError` and leaves the lifecycle state unchanged.
+Synchronous port reads and writes return `Result`. Asynchronous input ports (`AsyncInputPort::poll`) return `Option` and cannot distinguish a disconnected or corrupt source from the absence of a message; the integrator must supervise message freshness (for example with a deadline per message) on any safety-relevant asynchronous input. Port traits define an interface contract only; blocking behaviour and timeouts must be verified for each concrete port implementation.
+
+Port errors such as a missing message or a full port must be handled by the component, and the component's reaction must be part of its reviewed design. Component lifecycle transitions are checked; an invalid transition returns `LifecycleError` and leaves the lifecycle state unchanged.
 
 ## 7. Telemetry
 

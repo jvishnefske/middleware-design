@@ -18,13 +18,13 @@
 
 #![forbid(unsafe_code)]
 
-pub mod message;
 pub mod input;
+pub mod message;
 pub mod output;
 
 // Re-export key types
+pub use input::{AsyncInputPort, InputPort, SyncInputPort};
 pub use message::{PortMessage, MAX_MESSAGE_SIZE};
-pub use input::{InputPort, SyncInputPort, AsyncInputPort};
 pub use output::OutputPort;
 
 /// Port direction enumeration.

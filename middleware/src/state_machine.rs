@@ -15,6 +15,8 @@
 //! - REQ-FSM-021: Event processing
 //! - REQ-FSM-022: Transition results
 //! - REQ-FSM-023: Immutable processing
+//! - REQ-FSM-024: Row selection (first passing row fires; Remained / Ignored)
+//! - REQ-FSM-025: Distinct errors for failing exit, action and entry hooks
 //! - REQ-FSM-030: Threshold guards
 //! - REQ-FSM-031: Timed guards
 

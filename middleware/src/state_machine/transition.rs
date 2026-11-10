@@ -189,6 +189,8 @@ where
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +239,7 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies: REQ-FSM-010
     #[test]
     fn test_transition_matches() {
         let transition = Transition {
@@ -252,6 +255,7 @@ mod tests {
         assert!(!transition.matches(TestState::Idle, TestEvent::Stop));
     }
 
+    /// Verifies: REQ-FSM-011
     #[test]
     fn test_transition_guard_allowed() {
         let transition = Transition {
@@ -272,6 +276,7 @@ mod tests {
         assert!(!transition.is_allowed(&context));
     }
 
+    /// Verifies: REQ-FSM-011
     #[test]
     fn test_transition_guard_none() {
         let transition = Transition {
@@ -289,6 +294,7 @@ mod tests {
         assert!(transition.is_allowed(&context));
     }
 
+    /// Verifies: REQ-FSM-012
     #[test]
     fn test_transition_action() {
         let transition = Transition {
@@ -308,6 +314,7 @@ mod tests {
         assert!(context.action_executed);
     }
 
+    /// Verifies: REQ-FSM-012
     #[test]
     fn test_transition_no_action() {
         let transition = Transition {
@@ -331,6 +338,7 @@ mod tests {
         Err(StateMachineError::ActionFailed)
     }
 
+    /// Verifies: REQ-FSM-012
     #[test]
     fn test_transition_action_error_propagated() {
         let transition = Transition {
@@ -350,5 +358,48 @@ mod tests {
             transition.execute_action(&mut context),
             Err(StateMachineError::ActionFailed)
         );
+    }
+
+    /// Table built in a `const` item. The `const` assertions below are
+    /// evaluated by the compiler, so the test fails to build unless the
+    /// table (length and row contents) is a compile-time constant; the
+    /// table is then usable as the `&'static` table of a state machine
+    /// without any runtime construction.
+    /// Verifies: REQ-FSM-013, REQ-FSM-010
+    #[test]
+    fn test_transition_table_is_compile_time_constant() {
+        const TABLE: [Transition<TestState, TestEvent>; 2] = [
+            Transition {
+                source: TestState::Idle,
+                event: TestEvent::Start,
+                target: TestState::Running,
+                guard: Some(is_ready),
+                action: Some(mark_action_executed),
+            },
+            Transition {
+                source: TestState::Running,
+                event: TestEvent::Stop,
+                target: TestState::Idle,
+                guard: None,
+                action: None,
+            },
+        ];
+        const LEN: usize = TABLE.len();
+        const FIRST_TARGET: TestState = TABLE[0].target;
+        const SECOND_HAS_GUARD: bool = TABLE[1].guard.is_some();
+        const _: () = assert!(LEN == 2);
+        const _: () = assert!(matches!(FIRST_TARGET, TestState::Running));
+        const _: () = assert!(!SECOND_HAS_GUARD);
+
+        let context = TestContext {
+            ready: true,
+            action_executed: false,
+        };
+        let fsm = crate::state_machine::StateMachine::new(TestState::Idle, context, &TABLE);
+        let (fsm, _) = fsm.process(TestEvent::Start).unwrap();
+        assert_eq!(fsm.current_state(), TestState::Running);
+        assert!(fsm.context().action_executed);
+        let (fsm, _) = fsm.process(TestEvent::Stop).unwrap();
+        assert_eq!(fsm.current_state(), TestState::Idle);
     }
 }

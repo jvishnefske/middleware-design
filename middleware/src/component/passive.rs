@@ -211,6 +211,107 @@ mod tests {
         }
     }
 
+    /// Stateful test double that records how many invocations it has
+    /// served, to show the work is done during the call.
+    struct CountingPassive {
+        served: core::cell::Cell<u32>,
+    }
+
+    impl PassiveComponent for CountingPassive {
+        fn invoke(&self, invocation: Invocation) -> Result<Response, InvokeError> {
+            self.served.set(self.served.get() + 1);
+            match invocation {
+                Invocation::Query(_) => {
+                    Response::with_payload(invocation, &self.served.get().to_le_bytes())
+                }
+                Invocation::Command(0) => Err(InvokeError::InvalidParameters),
+                Invocation::Command(1) => Err(InvokeError::InvalidState),
+                Invocation::Command(2) => Err(InvokeError::ProcessingFailed),
+                Invocation::Command(_) => {
+                    Ok(Response::error(invocation, ResponseStatus::NotSupported))
+                }
+                Invocation::Update(_) => Err(InvokeError::NotSupported),
+            }
+        }
+    }
+
+    /// Invokes through the trait bound only, as a dispatcher would.
+    fn invoke_via_trait<C: PassiveComponent>(
+        component: &C,
+        invocation: Invocation,
+    ) -> Result<Response, InvokeError> {
+        component.invoke(invocation)
+    }
+
+    /// Synchronous invocation: `invoke` is a plain (non-async) function, as
+    /// pinned by coercion to a function pointer returning the `Result`
+    /// directly (an `async fn` returns a future and would not coerce). The
+    /// side effect has happened by the time the call returns, and each call
+    /// observes the effect of the previous one.
+    /// Verifies: REQ-CMP-010
+    #[test]
+    fn passive_invoke_is_synchronous() {
+        let signature: fn(&CountingPassive, Invocation) -> Result<Response, InvokeError> =
+            <CountingPassive as PassiveComponent>::invoke;
+        let component = CountingPassive {
+            served: core::cell::Cell::new(0),
+        };
+        for expected in 1_u32..=3 {
+            let response = signature(&component, Invocation::Query(0)).unwrap();
+            assert_eq!(component.served.get(), expected);
+            assert_eq!(
+                response.payload.get(..response.payload_len),
+                Some(&expected.to_le_bytes()[..])
+            );
+        }
+    }
+
+    /// `invoke` returns `Result<Response, InvokeError>`: the Ok class carries
+    /// a `Response` (with success or error status) and every `InvokeError`
+    /// variant reaches the caller unchanged.
+    /// Verifies: REQ-CMP-011
+    #[test]
+    fn passive_invoke_returns_response_or_every_invoke_error() {
+        let component = CountingPassive {
+            served: core::cell::Cell::new(0),
+        };
+        let ok = invoke_via_trait(&component, Invocation::Query(9)).unwrap();
+        assert_eq!(ok.invocation, Invocation::Query(9));
+        assert_eq!(ok.status, ResponseStatus::Success);
+
+        let status_only = invoke_via_trait(&component, Invocation::Command(3)).unwrap();
+        assert_eq!(status_only.status, ResponseStatus::NotSupported);
+        assert_eq!(status_only.payload_len, 0);
+
+        for (invocation, error) in [
+            (Invocation::Command(0), InvokeError::InvalidParameters),
+            (Invocation::Command(1), InvokeError::InvalidState),
+            (Invocation::Command(2), InvokeError::ProcessingFailed),
+            (Invocation::Update(0), InvokeError::NotSupported),
+        ] {
+            assert_eq!(invoke_via_trait(&component, invocation), Err(error));
+        }
+    }
+
+    /// Boundary values of the 32-byte payload: empty, exactly 32 and 33
+    /// bytes. The overflow is reported as an error, not truncated.
+    /// Verifies: REQ-CMP-011
+    #[test]
+    fn response_payload_capacity_boundaries() {
+        let empty = Response::with_payload(Invocation::Query(0), &[]).unwrap();
+        assert_eq!(empty, Response::success(Invocation::Query(0)));
+
+        let full_payload = [0xA5_u8; 32];
+        let full = Response::with_payload(Invocation::Query(0), &full_payload).unwrap();
+        assert_eq!(full.payload_len, 32);
+        assert_eq!(full.payload, full_payload);
+
+        assert_eq!(
+            Response::with_payload(Invocation::Query(0), &[0_u8; 33]),
+            Err(InvokeError::ProcessingFailed)
+        );
+    }
+
     #[test]
     fn invocation_types() {
         let cmd = Invocation::Command(1);

@@ -6,6 +6,12 @@
 //!
 //! - REQ-PLT-010: All fallible operations return Result<T, E>
 //! - REQ-PLT-011: Error types are exhaustive enums
+//!
+//! Every enum here is a closed set of payload-free variants, apart from
+//! [`FrameworkError`], which only wraps the other enums. None is
+//! `#[non_exhaustive]`; `checks/nostd-gen/tests/platform.rs` matches each
+//! one from outside the crate without a wildcard, so adding a variant or the
+//! attribute breaks that build until the change is reviewed.
 
 /// Top-level framework error type.
 ///
@@ -178,6 +184,8 @@ pub enum SerializationError {
 /// # Traceability
 ///
 /// - REQ-PLT-011: Exhaustive error variants
+/// - REQ-FSM-032: [`StateMachineError::InvalidTimeStep`] from
+///   `TimedGuard::update`
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum StateMachineError {
     /// No valid transition for event in current state
@@ -190,6 +198,8 @@ pub enum StateMachineError {
     InvalidState,
     /// Invalid event
     InvalidEvent,
+    /// Time step is negative, NaN or infinite
+    InvalidTimeStep,
 }
 
 /// Serialization/deserialization errors.
@@ -303,5 +313,67 @@ mod tests {
         let err = ControlError::Overflow;
         let debug_str = std::format!("{:?}", err);
         assert!(debug_str.contains("Overflow"));
+    }
+
+    /// Fails with the leaf error `e` when `fail` is set; stands in for a
+    /// fallible subsystem call.
+    fn leaf<E>(fail: bool, e: E) -> Result<(), E> {
+        if fail {
+            Err(e)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Runs one leaf of each kind with `?`, so each leaf error propagates
+    /// into `FrameworkError` through its `From` impl.
+    fn pipeline(failing: usize) -> Result<(), FrameworkError> {
+        leaf(failing == 0, InitError::HardwareFailed)?;
+        leaf(failing == 1, LifecycleError::HookFailed)?;
+        leaf(failing == 2, PortError::NotConnected)?;
+        leaf(failing == 3, StateMachineError::InvalidEvent)?;
+        leaf(failing == 4, SerializeError::DecodeFailed)?;
+        leaf(failing == 5, ControlError::DimensionMismatch)?;
+        leaf(failing == 6, InvokeError::ProcessingFailed)?;
+        leaf(failing == 7, CycleError::ComputationError)?;
+        Ok(())
+    }
+
+    /// Fallible operations compose as `Result`: every leaf error lifts into
+    /// the matching `FrameworkError` wrapper with `?` and keeps its value,
+    /// and the all-success path yields `Ok`. Each expected value is written
+    /// as an explicit variant, so the eight `From` impls are each checked
+    /// against the variant they must produce.
+    /// Verifies: REQ-PLT-010, REQ-PLT-011
+    #[test]
+    fn every_leaf_error_propagates_into_its_wrapper() {
+        let expected = [
+            FrameworkError::Init(InitError::HardwareFailed),
+            FrameworkError::Lifecycle(LifecycleError::HookFailed),
+            FrameworkError::Port(PortError::NotConnected),
+            FrameworkError::StateMachine(StateMachineError::InvalidEvent),
+            FrameworkError::Serialize(SerializeError::DecodeFailed),
+            FrameworkError::Control(ControlError::DimensionMismatch),
+            FrameworkError::Invoke(InvokeError::ProcessingFailed),
+            FrameworkError::Cycle(CycleError::ComputationError),
+        ];
+        for (i, want) in expected.iter().enumerate() {
+            assert_eq!(pipeline(i), Err(*want), "leaf {i}");
+        }
+        assert_eq!(pipeline(expected.len()), Ok(()));
+    }
+
+    /// Wrapper variants are distinct: equal leaves under different wrappers
+    /// are unequal, and a wrapper compares by its inner value.
+    #[test]
+    fn wrappers_distinguish_source_and_value() {
+        assert_ne!(
+            FrameworkError::Serialize(SerializeError::BufferTooSmall),
+            FrameworkError::Port(PortError::SendBufferFull)
+        );
+        assert_ne!(
+            FrameworkError::Init(InitError::InvalidConfig),
+            FrameworkError::Init(InitError::ResourceUnavailable)
+        );
     }
 }

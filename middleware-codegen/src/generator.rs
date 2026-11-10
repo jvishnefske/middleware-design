@@ -111,86 +111,103 @@ fn traces_doc(traces: &[String]) -> TokenStream {
 /// # Traceability
 /// - REQ-FSM-001: States as enums with repr
 fn generate_enums(enums: &[EnumDef]) -> TokenStream {
-    let enum_tokens: Vec<TokenStream> = enums.iter().map(|e| {
-        let name = format_ident!("{}", e.name);
-        let repr = format_ident!("{}", e.repr);
-        let traces = traces_doc(&e.traces);
+    let enum_tokens: Vec<TokenStream> = enums
+        .iter()
+        .map(|e| {
+            let name = format_ident!("{}", e.name);
+            let repr = format_ident!("{}", e.repr);
+            let traces = traces_doc(&e.traces);
 
-        let variants: Vec<TokenStream> = e.variants.iter().enumerate().map(|(i, v)| {
-            let variant_name = format_ident!("{}", v);
-            let idx = Literal::usize_unsuffixed(i);
-            quote! { #variant_name = #idx }
-        }).collect();
+            let variants: Vec<TokenStream> = e
+                .variants
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let variant_name = format_ident!("{}", v);
+                    let idx = Literal::usize_unsuffixed(i);
+                    quote! { #variant_name = #idx }
+                })
+                .collect();
 
-        let variant_count = e.variants.len();
-        let variant_names: Vec<_> = e.variants.iter().map(|v| format_ident!("{}", v)).collect();
-        let discriminants: Vec<Literal> =
-            (0..variant_count).map(Literal::usize_unsuffixed).collect();
-        let to_repr_doc = format!("Discriminant of `self` as `{}`, without an `as` cast.", e.repr);
+            let variant_count = e.variants.len();
+            let variant_names: Vec<_> = e.variants.iter().map(|v| format_ident!("{}", v)).collect();
+            let discriminants: Vec<Literal> =
+                (0..variant_count).map(Literal::usize_unsuffixed).collect();
+            let to_repr_doc = format!(
+                "Discriminant of `self` as `{}`, without an `as` cast.",
+                e.repr
+            );
 
-        quote! {
-            #traces
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            #[repr(#repr)]
-            pub enum #name {
-                #(#variants),*
-            }
+            quote! {
+                #traces
+                #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+                #[repr(#repr)]
+                pub enum #name {
+                    #(#variants),*
+                }
 
-            impl #name {
-                /// Number of variants in this enum.
-                pub const COUNT: usize = #variant_count;
+                impl #name {
+                    /// Number of variants in this enum.
+                    pub const COUNT: usize = #variant_count;
 
-                /// All variants as a const array.
-                pub const ALL: [Self; #variant_count] = [
-                    #(Self::#variant_names),*
-                ];
+                    /// All variants as a const array.
+                    pub const ALL: [Self; #variant_count] = [
+                        #(Self::#variant_names),*
+                    ];
 
-                #[doc = #to_repr_doc]
-                pub const fn to_repr(self) -> #repr {
-                    match self {
-                        #(Self::#variant_names => #discriminants),*
+                    #[doc = #to_repr_doc]
+                    pub const fn to_repr(self) -> #repr {
+                        match self {
+                            #(Self::#variant_names => #discriminants),*
+                        }
+                    }
+                }
+
+                impl ::core::convert::From<#name> for #repr {
+                    fn from(value: #name) -> Self {
+                        value.to_repr()
                     }
                 }
             }
-
-            impl ::core::convert::From<#name> for #repr {
-                fn from(value: #name) -> Self {
-                    value.to_repr()
-                }
-            }
-        }
-    }).collect();
+        })
+        .collect();
 
     quote! { #(#enum_tokens)* }
 }
 
 /// Generates struct definitions.
 fn generate_structs(structs: &[StructDef]) -> TokenStream {
-    let struct_tokens: Vec<TokenStream> = structs.iter().map(|s| {
-        let name = format_ident!("{}", s.name);
-        let traces = traces_doc(&s.traces);
+    let struct_tokens: Vec<TokenStream> = structs
+        .iter()
+        .map(|s| {
+            let name = format_ident!("{}", s.name);
+            let traces = traces_doc(&s.traces);
 
-        let fields = generate_fields(&s.fields);
+            let fields = generate_fields(&s.fields);
 
-        quote! {
-            #traces
-            #[derive(Debug, Clone, Copy, PartialEq)]
-            pub struct #name {
-                #fields
+            quote! {
+                #traces
+                #[derive(Debug, Clone, Copy, PartialEq)]
+                pub struct #name {
+                    #fields
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     quote! { #(#struct_tokens)* }
 }
 
 /// Generates field definitions.
 fn generate_fields(fields: &[Field]) -> TokenStream {
-    let field_tokens: Vec<TokenStream> = fields.iter().map(|f| {
-        let name = format_ident!("{}", f.name);
-        let ty = parse_type(&f.field_type);
-        quote! { pub #name: #ty }
-    }).collect();
+    let field_tokens: Vec<TokenStream> = fields
+        .iter()
+        .map(|f| {
+            let name = format_ident!("{}", f.name);
+            let ty = parse_type(&f.field_type);
+            quote! { pub #name: #ty }
+        })
+        .collect();
 
     quote! { #(#field_tokens),* }
 }
@@ -218,20 +235,23 @@ fn parse_type(type_str: &str) -> TokenStream {
 
 /// Generates message definitions.
 fn generate_messages(messages: &[MessageDef]) -> TokenStream {
-    let msg_tokens: Vec<TokenStream> = messages.iter().map(|m| {
-        let name = format_ident!("{}", m.name);
-        let traces = traces_doc(&m.traces);
+    let msg_tokens: Vec<TokenStream> = messages
+        .iter()
+        .map(|m| {
+            let name = format_ident!("{}", m.name);
+            let traces = traces_doc(&m.traces);
 
-        let fields = generate_fields(&m.fields);
+            let fields = generate_fields(&m.fields);
 
-        quote! {
-            #traces
-            #[derive(Debug, Clone, Copy, PartialEq)]
-            pub struct #name {
-                #fields
+            quote! {
+                #traces
+                #[derive(Debug, Clone, Copy, PartialEq)]
+                pub struct #name {
+                    #fields
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     quote! { #(#msg_tokens)* }
 }
@@ -325,7 +345,10 @@ fn generate_math_block(b: &MathBlock) -> Result<TokenStream, String> {
             })
         }
         "notch" => {
-            let notch_hz = b.config.notch_hz.unwrap_or(b.config.cutoff_hz.unwrap_or(60.0));
+            let notch_hz = b
+                .config
+                .notch_hz
+                .unwrap_or(b.config.cutoff_hz.unwrap_or(60.0));
             let bandwidth_hz = b.config.bandwidth_hz.unwrap_or(5.0);
             let sample_rate_hz = b.config.sample_rate_hz.unwrap_or(100.0);
 
@@ -358,8 +381,16 @@ fn generate_traceability(model: &Model) -> TokenStream {
 
     let req_count = model.requirements.len();
     let req_ids: Vec<&str> = model.requirements.iter().map(|r| r.id.as_str()).collect();
-    let req_descriptions: Vec<&str> = model.requirements.iter().map(|r| r.description.as_str()).collect();
-    let req_levels: Vec<&str> = model.requirements.iter().map(|r| r.level.as_str()).collect();
+    let req_descriptions: Vec<&str> = model
+        .requirements
+        .iter()
+        .map(|r| r.description.as_str())
+        .collect();
+    let req_levels: Vec<&str> = model
+        .requirements
+        .iter()
+        .map(|r| r.level.as_str())
+        .collect();
 
     quote! {
         /// Traceability information for this module.
@@ -387,11 +418,15 @@ fn generate_traceability(model: &Model) -> TokenStream {
 
 #[cfg(test)]
 // test code: a panic is a test failure, the intended reporting mechanism
-#[cfg_attr(test, allow(clippy::unwrap_used))]
+#[cfg_attr(
+    test,
+    allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)
+)]
 mod tests {
     use super::*;
     use crate::parser::parse_model;
 
+    /// Verifies: REQ-GEN-011
     #[test]
     fn test_generate_enum() {
         let yaml = r#"
@@ -413,6 +448,7 @@ types:
         assert!(code_str.contains("Running"));
     }
 
+    /// Verifies: REQ-GEN-011
     #[test]
     fn test_generate_struct() {
         let yaml = r#"
@@ -438,7 +474,10 @@ types:
     #[test]
     fn first_duplicate_returns_later_of_equal_items() {
         let same = |a: &(u8, char), b: &(u8, char)| a.0 == b.0;
-        assert_eq!(first_duplicate(&[(1, 'a'), (2, 'b'), (1, 'c')], same), Some(&(1, 'c')));
+        assert_eq!(
+            first_duplicate(&[(1, 'a'), (2, 'b'), (1, 'c')], same),
+            Some(&(1, 'c'))
+        );
         assert_eq!(first_duplicate(&[(1, 'a'), (2, 'b')], same), None);
         assert_eq!(first_duplicate::<(u8, char)>(&[], same), None);
     }
@@ -456,13 +495,22 @@ types:
 "#;
         let model = parse_model(yaml).unwrap();
         let code = generate_code(&model).unwrap().to_string();
-        assert!(code.contains("pub const fn to_repr (self) -> u16"), "{}", code);
+        assert!(
+            code.contains("pub const fn to_repr (self) -> u16"),
+            "{}",
+            code
+        );
         assert!(code.contains("Self :: On => 1"), "{}", code);
         assert!(code.contains("From < Mode > for u16"), "{}", code);
         // Doc strings mention "as"; an actual cast would render as `as u16`.
-        assert!(!code.contains(" as u16 ") && !code.contains(" as usize "), "{}", code);
+        assert!(
+            !code.contains(" as u16 ") && !code.contains(" as usize "),
+            "{}",
+            code
+        );
     }
 
+    /// Verifies: REQ-GEN-003, REQ-GEN-017
     #[test]
     fn test_pid_inverted_integral_limits_rejected() {
         let yaml = r#"
@@ -480,6 +528,7 @@ math_blocks:
         assert!(err.contains("integral_min"), "{}", err);
     }
 
+    /// Verifies: REQ-GEN-003, REQ-GEN-017
     #[test]
     fn test_pid_inverted_output_limits_rejected() {
         let yaml = r#"
@@ -495,5 +544,223 @@ math_blocks:
         let model = parse_model(yaml).unwrap();
         let err = generate_code(&model).unwrap_err();
         assert!(err.contains("output_min"), "{}", err);
+    }
+
+    /// Every element kind that takes `traces` carries its IDs into the
+    /// generated code as a `Traces:` doc comment next to the item it
+    /// generates; several IDs are listed in order.
+    /// Verifies: REQ-GEN-004, REQ-GEN-013
+    #[test]
+    fn traces_of_every_element_kind_appear_in_output() {
+        let yaml = r#"
+version: "1.0"
+namespace: "t"
+types:
+  enums:
+    - name: S
+      traces: [REQ-ENUM-1, REQ-ENUM-2]
+      repr: u8
+      variants: [A]
+  structs:
+    - name: P
+      traces: [REQ-STRUCT-1]
+      fields:
+        - name: x
+          type: f32
+messages:
+  - name: M
+    traces: [REQ-MSG-1]
+    fields:
+      - name: v
+        type: u8
+components:
+  - name: C
+    traces: [REQ-COMP-1]
+    kind: passive
+math_blocks:
+  - name: p
+    traces: [REQ-MATH-1]
+    kind: pid
+    config: {}
+state_machines:
+  - name: F
+    traces: [REQ-FSM-1]
+    state_type: S
+    initial_state: A
+    events: S
+    states:
+      - name: A
+    transitions: []
+"#;
+        let code = generate_code(&parse_model(yaml).unwrap())
+            .unwrap()
+            .to_string();
+        for (doc, item) in [
+            ("Traces: REQ-ENUM-1, REQ-ENUM-2", "pub enum S"),
+            ("Traces: REQ-STRUCT-1", "pub struct P"),
+            ("Traces: REQ-MSG-1", "pub struct M"),
+            ("Traces: REQ-COMP-1", "pub struct C <"),
+            ("Traces: REQ-MATH-1", "pub mod P"),
+            ("Traces: REQ-FSM-1", "pub mod F"),
+        ] {
+            let at = code
+                .find(&format!("# [doc = \"{}\"]", doc))
+                .unwrap_or_else(|| panic!("missing {:?} in {}", doc, code));
+            let item_at = code[at..]
+                .find(item)
+                .unwrap_or_else(|| panic!("no {} after {}", item, doc));
+            // The doc attribute belongs to the next item, not a later one.
+            assert!(
+                !code[at..at + item_at].contains("pub "),
+                "{} not attached to {}",
+                doc,
+                item
+            );
+        }
+        assert!(
+            code.contains("pub const TRACES : [& 'static str ; 1usize] = [\"REQ-COMP-1\"]"),
+            "{}",
+            code
+        );
+    }
+
+    /// Boundary: an element without traces gets no `Traces:` doc.
+    /// Verifies: REQ-GEN-004
+    #[test]
+    fn element_without_traces_has_no_traces_doc() {
+        let yaml = "version: \"1.0\"\nnamespace: t\ntypes:\n  enums:\n    - name: S\n      repr: u8\n      variants: [A]\n";
+        let code = generate_code(&parse_model(yaml).unwrap())
+            .unwrap()
+            .to_string();
+        assert!(!code.contains("Traces:"), "{}", code);
+        assert!(
+            !code.contains("traceability"),
+            "no requirements, no traceability module: {}",
+            code
+        );
+    }
+
+    /// Requirements become a `traceability` module of const arrays with
+    /// aligned IDs, descriptions and levels.
+    /// Verifies: REQ-GEN-013
+    #[test]
+    fn requirements_become_const_arrays() {
+        let yaml = r#"
+version: "1.0"
+namespace: "t"
+requirements:
+  - id: REQ-A-1
+    description: "first"
+    level: A
+  - id: REQ-B-2
+    description: "second"
+    level: D
+"#;
+        let code = generate_code(&parse_model(yaml).unwrap())
+            .unwrap()
+            .to_string();
+        assert!(code.contains("pub mod traceability"), "{}", code);
+        assert!(
+            code.contains("pub const REQUIREMENT_COUNT : usize = 2usize"),
+            "{}",
+            code
+        );
+        assert!(
+            code.contains(
+                "pub const REQUIREMENT_IDS : [& str ; 2usize] = [\"REQ-A-1\" , \"REQ-B-2\"]"
+            ),
+            "{}",
+            code
+        );
+        assert!(code.contains("[\"first\" , \"second\"]"), "{}", code);
+        assert!(code.contains("[\"A\" , \"D\"]"), "{}", code);
+    }
+
+    /// Filter and notch defaults, the notch fallback to `cutoff_hz`, and
+    /// `state_space` producing no code.
+    /// Verifies: REQ-GEN-003
+    #[test]
+    fn filter_blocks_emit_frequency_constants() {
+        let yaml = r#"
+version: "1.0"
+namespace: "t"
+math_blocks:
+  - name: hp
+    kind: high_pass
+    config: {}
+  - name: n_default
+    kind: notch
+    config: {}
+  - name: n_cutoff
+    kind: notch
+    config:
+      cutoff_hz: 50.0
+  - name: n_explicit
+    kind: notch
+    config:
+      notch_hz: 45.0
+      cutoff_hz: 50.0
+      bandwidth_hz: 2.0
+      sample_rate_hz: 400.0
+  - name: ss
+    kind: state_space
+    config: {}
+"#;
+        let code = generate_code(&parse_model(yaml).unwrap())
+            .unwrap()
+            .to_string();
+        let module = |name: &str| -> String {
+            let start = code
+                .find(&format!("pub mod {} {{", name))
+                .unwrap_or_else(|| panic!("{}", name));
+            let end = code[start..].find('}').unwrap();
+            code[start..start + end].to_string()
+        };
+        let hp = module("HP");
+        assert!(hp.contains("CUTOFF_HZ : f32 = 10f32"), "{}", hp);
+        assert!(hp.contains("SAMPLE_RATE_HZ : f32 = 100f32"), "{}", hp);
+        assert!(
+            code.contains("\"high_pass filter configuration.\""),
+            "{}",
+            code
+        );
+        let n = module("N_DEFAULT");
+        assert!(n.contains("NOTCH_HZ : f32 = 60f32"), "{}", n);
+        assert!(n.contains("BANDWIDTH_HZ : f32 = 5f32"), "{}", n);
+        assert!(module("N_CUTOFF").contains("NOTCH_HZ : f32 = 50f32"));
+        let n = module("N_EXPLICIT");
+        assert!(n.contains("NOTCH_HZ : f32 = 45f32"), "{}", n);
+        assert!(n.contains("BANDWIDTH_HZ : f32 = 2f32"), "{}", n);
+        assert!(n.contains("SAMPLE_RATE_HZ : f32 = 400f32"), "{}", n);
+        assert!(!code.contains("pub mod SS"), "{}", code);
+    }
+
+    /// Boundary: equal PID limits (min == max) are accepted.
+    /// Verifies: REQ-GEN-003
+    #[test]
+    fn pid_equal_limits_are_accepted() {
+        let yaml = "version: \"1.0\"\nnamespace: t\nmath_blocks:\n  - name: p\n    kind: pid\n    config:\n      output_min: 0.5\n      output_max: 0.5\n      integral_min: 0.0\n      integral_max: 0.0\n";
+        let code = generate_code(&parse_model(yaml).unwrap())
+            .unwrap()
+            .to_string();
+        assert!(code.contains("OUTPUT_MIN : f32 = 0.5f32"), "{}", code);
+    }
+
+    /// Defence in depth: `generate_code` runs the semantic checks itself.
+    /// Verifies: REQ-GEN-017
+    #[test]
+    fn generate_code_rejects_semantically_invalid_model() {
+        let model = parse_model("version: \"1.0\"\nnamespace: Bad\n").unwrap();
+        assert!(generate_code(&model).unwrap_err().contains("lowercase"));
+    }
+
+    #[test]
+    fn primitive_and_named_field_types() {
+        let names = [
+            "f32", "f64", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "bool", "Custom",
+        ];
+        for name in names {
+            assert_eq!(parse_type(name).to_string(), name);
+        }
     }
 }

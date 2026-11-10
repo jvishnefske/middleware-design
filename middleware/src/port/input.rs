@@ -11,9 +11,9 @@
 
 #![forbid(unsafe_code)]
 
-use core::time::Duration;
 use crate::error::RecvError;
 use crate::port::message::PortMessage;
+use core::time::Duration;
 
 /// Base trait for input ports.
 ///
@@ -276,7 +276,10 @@ pub trait AsyncInputPort<M: PortMessage>: InputPort<M> {
 
     /// Check if a message is available without consuming it.
     ///
-    /// Returns `true` if `poll()` would return `Some`.
+    /// An implementation that overrides this returns `true` exactly when
+    /// `poll()` would return `Some`. The default implementation cannot peek
+    /// and always returns `false`, so callers must treat a default `false`
+    /// as "unknown" and still call `poll()`; a `true` is always reliable.
     fn has_message(&self) -> bool {
         false // Default: conservative assumption
     }
@@ -288,7 +291,10 @@ pub trait AsyncInputPort<M: PortMessage>: InputPort<M> {
 mod tests {
     use super::*;
     use crate::error::SerializationError;
+    use core::cell::Cell;
+    use core::marker::PhantomData;
 
+    /// Four-byte little-endian `u32` message.
     #[derive(Debug, Clone, PartialEq)]
     struct TestMessage {
         value: u32,
@@ -314,13 +320,68 @@ mod tests {
         }
     }
 
-    struct TestSyncPort {
-        name: &'static str,
-        connected: bool,
-        message: Option<TestMessage>,
+    /// One-byte message, a second type to show ports are typed per message.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct Tick(u8);
+
+    impl PortMessage for Tick {
+        fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializationError> {
+            *buffer
+                .first_mut()
+                .ok_or(SerializationError::BufferTooSmall)? = self.0;
+            Ok(1)
+        }
+
+        fn deserialize(buffer: &[u8]) -> Result<Self, SerializationError> {
+            buffer
+                .first()
+                .map(|b| Tick(*b))
+                .ok_or(SerializationError::InvalidFormat)
+        }
     }
 
-    impl InputPort<TestMessage> for TestSyncPort {
+    const SLOT: usize = 8;
+
+    /// Raw bytes of one pending message as received off a link.
+    type Payload = Cell<Option<([u8; SLOT], usize)>>;
+
+    fn payload_from(bytes: &[u8]) -> Payload {
+        let mut buf = [0u8; SLOT];
+        buf.get_mut(..bytes.len()).unwrap().copy_from_slice(bytes);
+        Cell::new(Some((buf, bytes.len())))
+    }
+
+    /// Takes the pending payload and decodes it as `M`, mapping a missing
+    /// payload to `NoMessage` and any decode error to
+    /// `DeserializationFailed`, as a real transport would.
+    fn take_decoded<M: PortMessage>(payload: &Payload) -> Result<M, RecvError> {
+        let (buf, len) = payload.take().ok_or(RecvError::NoMessage)?;
+        let bytes = buf.get(..len).ok_or(RecvError::DeserializationFailed)?;
+        M::deserialize(bytes).map_err(|_| RecvError::DeserializationFailed)
+    }
+
+    /// Single-slot sync port backed by raw bytes; records the last timeout.
+    struct BytesSyncPort<M> {
+        name: &'static str,
+        connected: bool,
+        payload: Payload,
+        last_timeout: Cell<Option<Duration>>,
+        _message: PhantomData<M>,
+    }
+
+    impl<M> BytesSyncPort<M> {
+        fn new(connected: bool, bytes: Option<&[u8]>) -> Self {
+            Self {
+                name: "sync",
+                connected,
+                payload: bytes.map_or(Cell::new(None), payload_from),
+                last_timeout: Cell::new(None),
+                _message: PhantomData,
+            }
+        }
+    }
+
+    impl<M: PortMessage> InputPort<M> for BytesSyncPort<M> {
         fn name(&self) -> &'static str {
             self.name
         }
@@ -330,24 +391,36 @@ mod tests {
         }
     }
 
-    impl SyncInputPort<TestMessage> for TestSyncPort {
-        fn recv(&self, _timeout: Duration) -> Result<TestMessage, RecvError> {
+    impl<M: PortMessage> SyncInputPort<M> for BytesSyncPort<M> {
+        fn recv(&self, timeout: Duration) -> Result<M, RecvError> {
+            self.last_timeout.set(Some(timeout));
             if !self.connected {
                 return Err(RecvError::Disconnected);
             }
-            self.message.clone().ok_or(RecvError::NoMessage)
+            take_decoded(&self.payload)
         }
     }
 
-    struct TestAsyncPort {
-        name: &'static str,
+    /// Single-slot async port backed by raw bytes; overrides `has_message`.
+    struct BytesAsyncPort<M> {
         connected: bool,
-        message: Option<TestMessage>,
+        payload: Payload,
+        _message: PhantomData<M>,
     }
 
-    impl InputPort<TestMessage> for TestAsyncPort {
+    impl<M> BytesAsyncPort<M> {
+        fn new(connected: bool, bytes: Option<&[u8]>) -> Self {
+            Self {
+                connected,
+                payload: bytes.map_or(Cell::new(None), payload_from),
+                _message: PhantomData,
+            }
+        }
+    }
+
+    impl<M: PortMessage> InputPort<M> for BytesAsyncPort<M> {
         fn name(&self) -> &'static str {
-            self.name
+            "async"
         }
 
         fn is_connected(&self) -> bool {
@@ -355,130 +428,186 @@ mod tests {
         }
     }
 
-    impl AsyncInputPort<TestMessage> for TestAsyncPort {
-        fn poll(&self) -> Option<TestMessage> {
-            if self.connected {
-                self.message.clone()
-            } else {
-                None
+    impl<M: PortMessage> AsyncInputPort<M> for BytesAsyncPort<M> {
+        fn poll(&self) -> Option<M> {
+            if !self.connected {
+                return None;
             }
+            take_decoded(&self.payload).ok()
         }
 
         fn has_message(&self) -> bool {
-            self.message.is_some()
+            let pending = self.payload.take();
+            let present = pending.is_some();
+            self.payload.set(pending);
+            self.connected && present
         }
     }
 
-    #[test]
-    fn sync_port_name() {
-        let port = TestSyncPort {
-            name: "test_port",
-            connected: true,
-            message: None,
-        };
-        assert_eq!(port.name(), "test_port");
+    /// Async port that relies on the default `has_message`.
+    struct MinimalAsyncPort {
+        pending: Cell<Option<Tick>>,
     }
 
-    #[test]
-    fn sync_port_connected() {
-        let port = TestSyncPort {
-            name: "test",
-            connected: true,
-            message: None,
-        };
-        assert!(port.is_connected());
+    impl InputPort<Tick> for MinimalAsyncPort {
+        fn name(&self) -> &'static str {
+            "minimal"
+        }
+
+        fn is_connected(&self) -> bool {
+            true
+        }
     }
 
-    #[test]
-    fn sync_port_recv_success() {
-        let port = TestSyncPort {
-            name: "test",
-            connected: true,
-            message: Some(TestMessage { value: 42 }),
-        };
-
-        let msg = port.recv(Duration::from_millis(10)).unwrap();
-        assert_eq!(msg.value, 42);
+    impl AsyncInputPort<Tick> for MinimalAsyncPort {
+        fn poll(&self) -> Option<Tick> {
+            self.pending.take()
+        }
     }
 
-    #[test]
-    fn sync_port_recv_no_message() {
-        let port = TestSyncPort {
-            name: "test",
-            connected: true,
-            message: None,
-        };
-
-        let result = port.recv(Duration::from_millis(10));
-        assert_eq!(result, Err(RecvError::NoMessage));
+    fn describe<M: PortMessage, P: InputPort<M>>(port: &P) -> (&'static str, bool) {
+        (port.name(), port.is_connected())
     }
 
-    #[test]
-    fn sync_port_recv_disconnected() {
-        let port = TestSyncPort {
-            name: "test",
-            connected: false,
-            message: None,
-        };
-
-        let result = port.recv(Duration::from_millis(10));
-        assert_eq!(result, Err(RecvError::Disconnected));
+    fn recv_as<M: PortMessage, P: SyncInputPort<M>>(port: &P) -> Result<M, RecvError> {
+        port.recv(Duration::from_millis(1))
     }
 
-    #[test]
-    fn sync_port_try_recv() {
-        let port = TestSyncPort {
-            name: "test",
-            connected: true,
-            message: Some(TestMessage { value: 123 }),
-        };
-
-        let msg = port.try_recv().unwrap();
-        assert_eq!(msg.value, 123);
+    fn poll_as<M: PortMessage, P: AsyncInputPort<M>>(port: &P) -> Option<M> {
+        port.poll()
     }
 
+    /// The same port implementation, instantiated for two message types,
+    /// decodes identical bytes into the type it is parameterized by. The
+    /// result types are fixed by the generic bounds at compile time.
+    ///
+    /// Verifies: REQ-PRT-010
     #[test]
-    fn async_port_poll_success() {
-        let port = TestAsyncPort {
-            name: "test",
-            connected: true,
-            message: Some(TestMessage { value: 99 }),
-        };
+    fn input_ports_are_parameterized_by_message_type() {
+        let bytes = 0x0403_0201u32.to_le_bytes();
 
-        let msg = port.poll().unwrap();
-        assert_eq!(msg.value, 99);
+        let as_message = BytesSyncPort::<TestMessage>::new(true, Some(&bytes));
+        let as_tick = BytesSyncPort::<Tick>::new(true, Some(&bytes));
+        let message: Result<TestMessage, RecvError> = recv_as(&as_message);
+        let tick: Result<Tick, RecvError> = recv_as(&as_tick);
+        assert_eq!(message, Ok(TestMessage { value: 0x0403_0201 }));
+        assert_eq!(tick, Ok(Tick(0x01)));
+
+        let async_message = BytesAsyncPort::<TestMessage>::new(true, Some(&bytes));
+        let async_tick = BytesAsyncPort::<Tick>::new(true, Some(&bytes));
+        assert_eq!(
+            poll_as(&async_message),
+            Some(TestMessage { value: 0x0403_0201 })
+        );
+        assert_eq!(poll_as(&async_tick), Some(Tick(0x01)));
+
+        assert_eq!(describe::<TestMessage, _>(&as_message), ("sync", true));
+        assert_eq!(describe::<Tick, _>(&async_tick), ("async", true));
+        assert_eq!(
+            describe::<Tick, _>(&MinimalAsyncPort {
+                pending: Cell::new(None)
+            }),
+            ("minimal", true)
+        );
     }
 
+    /// `recv` takes the caller's timeout and passes it to the
+    /// implementation unchanged (including the zero and maximum boundaries),
+    /// `try_recv` is `recv` with a zero timeout, and every failure (empty
+    /// port, disconnected, short or empty payload) is a distinct `RecvError`.
+    ///
+    /// Verifies: REQ-PRT-011
     #[test]
-    fn async_port_poll_no_message() {
-        let port = TestAsyncPort {
-            name: "test",
-            connected: true,
-            message: None,
-        };
+    fn sync_recv_honours_timeout_and_reports_faults() {
+        let port = BytesSyncPort::<TestMessage>::new(true, Some(&42u32.to_le_bytes()));
+        assert_eq!(
+            port.recv(Duration::from_millis(100)),
+            Ok(TestMessage { value: 42 })
+        );
+        assert_eq!(port.last_timeout.get(), Some(Duration::from_millis(100)));
 
-        assert!(port.poll().is_none());
+        // Empty port: the timeout expires with no message.
+        assert_eq!(port.recv(Duration::MAX), Err(RecvError::NoMessage));
+        assert_eq!(port.last_timeout.get(), Some(Duration::MAX));
+        assert_eq!(port.try_recv(), Err(RecvError::NoMessage));
+        assert_eq!(port.last_timeout.get(), Some(Duration::ZERO));
+
+        let ready = BytesSyncPort::<TestMessage>::new(true, Some(&7u32.to_le_bytes()));
+        assert_eq!(ready.try_recv(), Ok(TestMessage { value: 7 }));
+        assert_eq!(ready.last_timeout.get(), Some(Duration::ZERO));
+
+        let disconnected = BytesSyncPort::<TestMessage>::new(false, Some(&[1, 2, 3, 4]));
+        assert!(!disconnected.is_connected());
+        assert_eq!(
+            disconnected.recv(Duration::from_millis(10)),
+            Err(RecvError::Disconnected)
+        );
+        assert_eq!(disconnected.try_recv(), Err(RecvError::Disconnected));
+
+        let short = BytesSyncPort::<TestMessage>::new(true, Some(&[1, 2, 3]));
+        assert_eq!(short.try_recv(), Err(RecvError::DeserializationFailed));
+        // The bad payload is consumed; the port is then empty.
+        assert_eq!(short.try_recv(), Err(RecvError::NoMessage));
+
+        let empty_payload = BytesSyncPort::<Tick>::new(true, Some(&[]));
+        assert_eq!(
+            empty_payload.try_recv(),
+            Err(RecvError::DeserializationFailed)
+        );
     }
 
+    /// `poll` has no timeout parameter and returns `Option` (checked by the
+    /// function-pointer binding), so it returns immediately: `Some` once per
+    /// pending message, then `None`. Disconnection and undecodable payloads
+    /// also yield `None`. `has_message` agrees with `poll` when overridden
+    /// and is `false` by default.
+    ///
+    /// Verifies: REQ-PRT-012
     #[test]
-    fn async_port_poll_disconnected() {
-        let port = TestAsyncPort {
-            name: "test",
-            connected: false,
-            message: Some(TestMessage { value: 99 }),
-        };
+    fn async_poll_is_non_blocking_and_consumes() {
+        let _poll: fn(&BytesAsyncPort<TestMessage>) -> Option<TestMessage> =
+            <BytesAsyncPort<TestMessage> as AsyncInputPort<TestMessage>>::poll;
 
-        assert!(port.poll().is_none());
-    }
-
-    #[test]
-    fn async_port_has_message() {
-        let port = TestAsyncPort {
-            name: "test",
-            connected: true,
-            message: Some(TestMessage { value: 1 }),
-        };
-
+        let port = BytesAsyncPort::<TestMessage>::new(true, Some(&99u32.to_le_bytes()));
         assert!(port.has_message());
+        assert_eq!(port.poll(), Some(TestMessage { value: 99 }));
+        assert!(!port.has_message());
+        assert_eq!(port.poll(), None);
+
+        let empty = BytesAsyncPort::<TestMessage>::new(true, None);
+        assert!(!empty.has_message());
+        assert_eq!(empty.poll(), None);
+
+        let disconnected = BytesAsyncPort::<TestMessage>::new(false, Some(&[0; 4]));
+        assert!(!disconnected.is_connected());
+        assert!(!disconnected.has_message());
+        assert_eq!(disconnected.poll(), None);
+
+        let invalid = BytesAsyncPort::<TestMessage>::new(true, Some(&[0; 2]));
+        assert!(invalid.has_message());
+        assert_eq!(invalid.poll(), None);
+
+        let minimal = MinimalAsyncPort {
+            pending: Cell::new(Some(Tick(5))),
+        };
+        assert!(!minimal.has_message());
+        assert_eq!(minimal.poll(), Some(Tick(5)));
+        assert_eq!(minimal.poll(), None);
+    }
+
+    #[test]
+    fn test_messages_serialize() {
+        let mut buf = [0u8; 4];
+        assert_eq!(TestMessage { value: 9 }.serialize(&mut buf), Ok(4));
+        assert_eq!(buf, 9u32.to_le_bytes());
+        assert_eq!(
+            TestMessage { value: 9 }.serialize(&mut [0u8; 3]),
+            Err(SerializationError::BufferTooSmall)
+        );
+        assert_eq!(Tick(3).serialize(&mut buf), Ok(1));
+        assert_eq!(
+            Tick(3).serialize(&mut []),
+            Err(SerializationError::BufferTooSmall)
+        );
     }
 }

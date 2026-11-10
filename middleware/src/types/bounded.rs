@@ -149,7 +149,10 @@ impl<T, const N: usize> BoundedVec<T, N> {
     ///
     /// - REQ-TYP-020: BoundedVec operations
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
-        self.data.iter_mut().take(self.len).filter_map(|x| x.as_mut())
+        self.data
+            .iter_mut()
+            .take(self.len)
+            .filter_map(|x| x.as_mut())
     }
 }
 
@@ -347,6 +350,135 @@ mod tests {
 
     extern crate std;
 
+    /// `BoundedVec<T, N>` holds up to exactly `N` elements inline: capacity is
+    /// the const parameter, the storage is part of the value (its size grows
+    /// with `N`, so nothing lives on a heap), elements keep insertion order,
+    /// and the vector is reusable after `clear` and after popping from full.
+    ///
+    /// Verifies: REQ-TYP-020
+    #[test]
+    fn test_bounded_vec_fixed_capacity_inline() {
+        assert!(
+            core::mem::size_of::<BoundedVec<u32, 8>>() >= 8 * core::mem::size_of::<Option<u32>>()
+        );
+        assert!(
+            core::mem::size_of::<BoundedVec<u32, 8>>() > core::mem::size_of::<BoundedVec<u32, 4>>()
+        );
+
+        let mut vec: BoundedVec<u32, 4> = BoundedVec::default();
+        assert_eq!(vec, BoundedVec::new());
+        assert_eq!(vec.capacity(), 4);
+        for i in 0..4 {
+            assert_eq!(vec.push(i), Ok(()));
+        }
+        assert_eq!(vec.len(), vec.capacity());
+        assert!(!vec.is_empty());
+        let collected: std::vec::Vec<u32> = vec.iter().copied().collect();
+        assert_eq!(collected, [0, 1, 2, 3]);
+        assert_eq!(vec.get(3), Some(&3));
+        assert_eq!(vec.get(4), None);
+        assert_eq!(vec.get(usize::MAX), None);
+        assert_eq!(vec.get_mut(usize::MAX), None);
+
+        assert_eq!(vec.pop(), Some(3));
+        assert_eq!(vec.push(30), Ok(()));
+        assert_eq!(vec.get(3), Some(&30));
+
+        vec.clear();
+        assert!(vec.is_empty());
+        assert_eq!(vec.get(0), None);
+        assert_eq!(vec.iter().count(), 0);
+        for i in 10..14 {
+            assert_eq!(vec.push(i), Ok(()));
+        }
+        assert_eq!(vec.get(0), Some(&10));
+        assert_eq!(vec.len(), 4);
+    }
+
+    /// `BoundedString<N>` stores up to exactly `N` UTF-8 bytes inline. An
+    /// exact fit (ASCII and a multi-byte char filling the last bytes) is
+    /// accepted, length is counted in bytes, and the string is reusable
+    /// after `clear`.
+    ///
+    /// Verifies: REQ-TYP-021
+    #[test]
+    fn test_bounded_string_fixed_capacity_inline() {
+        assert!(core::mem::size_of::<BoundedString<64>>() >= 64);
+
+        let mut s: BoundedString<4> = BoundedString::default();
+        assert_eq!(s, BoundedString::new());
+        assert_eq!(s.as_str(), "");
+        assert_eq!(s.as_bytes(), b"");
+        assert_eq!(s.push_str(""), Ok(()));
+        assert!(s.is_empty());
+
+        assert_eq!(s.push_str("ab"), Ok(()));
+        assert!(!s.is_empty());
+        // 'λ' is two bytes and exactly fills the remaining capacity.
+        assert_eq!(s.push('λ'), Ok(()));
+        assert_eq!(s.len(), 4);
+        assert_eq!(s.len(), s.capacity());
+        assert_eq!(s.as_str(), "abλ");
+        assert_eq!(std::format!("{s}"), "abλ");
+        // Pushing nothing onto a full string is not an overflow.
+        assert_eq!(s.push_str(""), Ok(()));
+
+        s.clear();
+        assert!(s.is_empty());
+        assert_eq!(s.push_str("wxyz"), Ok(()));
+        assert_eq!(s.as_bytes(), b"wxyz");
+
+        let exact: BoundedString<4> = "🦀".parse().unwrap();
+        assert_eq!(exact.len(), 4);
+        assert_eq!(exact.as_str(), "🦀");
+    }
+
+    /// Every operation that can exceed capacity returns
+    /// `Err(SerializeError::BufferTooSmall)` at N+1 and leaves the
+    /// collection unchanged, including for zero capacity and for a
+    /// multi-byte char that only partly fits.
+    ///
+    /// Verifies: REQ-TYP-022
+    #[test]
+    fn test_bounded_overflow_returns_err_and_preserves_state() {
+        let mut vec: BoundedVec<u8, 2> = BoundedVec::new();
+        assert_eq!(vec.push(1), Ok(()));
+        assert_eq!(vec.push(2), Ok(()));
+        assert_eq!(vec.push(3), Err(SerializeError::BufferTooSmall));
+        assert_eq!(vec.push(4), Err(SerializeError::BufferTooSmall));
+        assert_eq!(vec.len(), 2);
+        assert_eq!(vec.get(0), Some(&1));
+        assert_eq!(vec.get(1), Some(&2));
+
+        let mut zero: BoundedVec<u8, 0> = BoundedVec::new();
+        assert_eq!(zero.push(0), Err(SerializeError::BufferTooSmall));
+        assert!(zero.is_empty());
+
+        let mut s: BoundedString<3> = BoundedString::new();
+        assert_eq!(s.push_str("abcd"), Err(SerializeError::BufferTooSmall));
+        assert!(s.is_empty());
+        assert_eq!(s.push_str("ab"), Ok(()));
+        assert_eq!(s.push('λ'), Err(SerializeError::BufferTooSmall));
+        assert_eq!(s.push_str("cd"), Err(SerializeError::BufferTooSmall));
+        assert_eq!(s.as_str(), "ab");
+        assert_eq!(s.push('c'), Ok(()));
+        assert_eq!(s.push('d'), Err(SerializeError::BufferTooSmall));
+        assert_eq!(s.as_str(), "abc");
+
+        let mut empty_cap: BoundedString<0> = BoundedString::new();
+        assert_eq!(empty_cap.push('a'), Err(SerializeError::BufferTooSmall));
+        assert_eq!(empty_cap.push_str(""), Ok(()));
+
+        assert_eq!(
+            BoundedString::<3>::from_str("abcd"),
+            Err(SerializeError::BufferTooSmall)
+        );
+        assert_eq!(
+            BoundedString::<3>::try_from("🦀"),
+            Err(SerializeError::BufferTooSmall)
+        );
+    }
+
     #[test]
     fn test_bounded_vec_new() {
         let vec: BoundedVec<i32, 10> = BoundedVec::new();
@@ -389,9 +521,7 @@ mod tests {
     fn test_bounded_vec_get_mut() {
         let mut vec: BoundedVec<i32, 3> = BoundedVec::new();
         vec.push(10).unwrap();
-        if let Some(val) = vec.get_mut(0) {
-            *val = 99;
-        }
+        *vec.get_mut(0).unwrap() = 99;
         assert_eq!(vec.get(0), Some(&99));
     }
 

@@ -50,12 +50,18 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
             return Err(format!("Enum '{}' must be PascalCase", enum_def.name));
         }
         if enum_def.variants.is_empty() {
-            return Err(format!("Enum '{}' must have at least one variant", enum_def.name));
+            return Err(format!(
+                "Enum '{}' must have at least one variant",
+                enum_def.name
+            ));
         }
         // Validate repr
         let valid_reprs = ["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"];
         if !valid_reprs.contains(&enum_def.repr.as_str()) {
-            return Err(format!("Invalid repr '{}' for enum '{}'", enum_def.repr, enum_def.name));
+            return Err(format!(
+                "Invalid repr '{}' for enum '{}'",
+                enum_def.repr, enum_def.name
+            ));
         }
     }
 
@@ -65,7 +71,10 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
             return Err(format!("Struct '{}' must be PascalCase", struct_def.name));
         }
         if struct_def.fields.is_empty() {
-            return Err(format!("Struct '{}' must have at least one field", struct_def.name));
+            return Err(format!(
+                "Struct '{}' must have at least one field",
+                struct_def.name
+            ));
         }
     }
 
@@ -82,7 +91,10 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
             return Err(format!("Component '{}' must be PascalCase", comp.name));
         }
         if comp.kind != "passive" && comp.kind != "active" {
-            return Err(format!("Component '{}' kind must be 'passive' or 'active'", comp.name));
+            return Err(format!(
+                "Component '{}' kind must be 'passive' or 'active'",
+                comp.name
+            ));
         }
     }
 
@@ -90,7 +102,10 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
     for block in &model.math_blocks {
         let valid_kinds = ["pid", "low_pass", "high_pass", "notch", "state_space"];
         if !valid_kinds.contains(&block.kind.as_str()) {
-            return Err(format!("Invalid math block kind '{}' for '{}'", block.kind, block.name));
+            return Err(format!(
+                "Invalid math block kind '{}' for '{}'",
+                block.kind, block.name
+            ));
         }
     }
 
@@ -100,7 +115,10 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
             return Err(format!("State machine '{}' must be PascalCase", fsm.name));
         }
         if fsm.states.is_empty() {
-            return Err(format!("State machine '{}' must have at least one state", fsm.name));
+            return Err(format!(
+                "State machine '{}' must have at least one state",
+                fsm.name
+            ));
         }
         // Check initial state exists
         if !fsm.states.iter().any(|s| s.name == fsm.initial_state) {
@@ -114,7 +132,10 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
     // Validate requirement ID format
     for req in &model.requirements {
         if !req.id.starts_with("REQ-") {
-            return Err(format!("Requirement ID '{}' must start with 'REQ-'", req.id));
+            return Err(format!(
+                "Requirement ID '{}' must start with 'REQ-'",
+                req.id
+            ));
         }
     }
 
@@ -215,5 +236,147 @@ types:
         let model = parse_model(yaml).unwrap();
         let result = validate_model(&model);
         assert!(result.is_err());
+    }
+
+    /// Model text with every element kind, each valid.
+    const VALID: &str = r#"
+version: "1.0"
+namespace: "test"
+requirements:
+  - id: REQ-T-1
+    description: d
+    level: C
+types:
+  enums:
+    - name: S
+      repr: u8
+      variants: [A]
+  structs:
+    - name: P
+      fields:
+        - name: x
+          type: f32
+messages:
+  - name: M
+    fields:
+      - name: v
+        type: u8
+components:
+  - name: C
+    kind: passive
+math_blocks:
+  - name: pid
+    kind: pid
+    config: {}
+state_machines:
+  - name: F
+    state_type: S
+    initial_state: A
+    events: S
+    states:
+      - name: A
+    transitions: []
+"#;
+
+    /// Applies `edit` (a `(from, to)` text substitution) to [`VALID`] and
+    /// returns the validation error.
+    fn error_after(from: &str, to: &str) -> String {
+        assert!(VALID.contains(from), "fixture does not contain {:?}", from);
+        let model = parse_model(&VALID.replacen(from, to, 1)).unwrap();
+        validate_model(&model).unwrap_err()
+    }
+
+    #[test]
+    fn test_validate_accepts_every_valid_element() {
+        let model = parse_model(VALID).unwrap();
+        assert_eq!(validate_model(&model), Ok(()));
+    }
+
+    /// Defence in depth: every semantic rule rejects its violation even
+    /// when the schema check has been bypassed. One case per `Err` path.
+    #[test]
+    fn test_validate_rejects_each_rule_violation() {
+        let cases: [(&str, &str, &str); 16] = [
+            (
+                "version: \"1.0\"",
+                "version: \"10\"",
+                "Invalid version format",
+            ),
+            (
+                "namespace: \"test\"",
+                "namespace: \"\"",
+                "Namespace cannot be empty",
+            ),
+            (
+                "namespace: \"test\"",
+                "namespace: \"_t\"",
+                "must start with lowercase",
+            ),
+            ("- name: S\n", "- name: s\n", "Enum 's' must be PascalCase"),
+            ("variants: [A]", "variants: []", "at least one variant"),
+            ("repr: u8", "repr: u128", "Invalid repr 'u128'"),
+            (
+                "- name: P\n",
+                "- name: p\n",
+                "Struct 'p' must be PascalCase",
+            ),
+            (
+                "fields:\n        - name: x\n          type: f32",
+                "fields: []",
+                "Struct 'P' must have at least one field",
+            ),
+            (
+                "- name: M\n",
+                "- name: m\n",
+                "Message 'm' must be PascalCase",
+            ),
+            (
+                "- name: C\n",
+                "- name: c\n",
+                "Component 'c' must be PascalCase",
+            ),
+            (
+                "kind: passive",
+                "kind: reactive",
+                "kind must be 'passive' or 'active'",
+            ),
+            (
+                "kind: pid",
+                "kind: lead_lag",
+                "Invalid math block kind 'lead_lag'",
+            ),
+            (
+                "- name: F\n",
+                "- name: f\n",
+                "State machine 'f' must be PascalCase",
+            ),
+            (
+                "states:\n      - name: A\n",
+                "states: []\n",
+                "must have at least one state",
+            ),
+            (
+                "initial_state: A",
+                "initial_state: Z",
+                "Initial state 'Z' not found",
+            ),
+            ("id: REQ-T-1", "id: RQ-T-1", "must start with 'REQ-'"),
+        ];
+        for (from, to, expected) in cases {
+            let err = error_after(from, to);
+            assert!(err.contains(expected), "{:?} -> {:?}: {}", from, to, err);
+        }
+    }
+
+    #[test]
+    fn test_validate_active_kind_is_accepted() {
+        let model = parse_model(&VALID.replacen("kind: passive", "kind: active", 1)).unwrap();
+        assert_eq!(validate_model(&model), Ok(()));
+    }
+
+    #[test]
+    fn test_parse_rejects_malformed_yaml() {
+        let err = parse_model("version: [unclosed").unwrap_err();
+        assert!(err.starts_with("YAML parse error"), "{}", err);
     }
 }

@@ -169,9 +169,7 @@ mod tests {
 
     #[test]
     fn builder_validation_error() {
-        let result = TestConfigBuilder::new()
-            .with_value(150)
-            .build();
+        let result = TestConfigBuilder::new().with_value(150).build();
 
         assert!(result.is_err());
     }

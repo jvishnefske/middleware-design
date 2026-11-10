@@ -7,11 +7,12 @@
 //!   problems;
 //! - `cargo xtask trace --check` verifies traceability and that the report is
 //!   current, writing nothing;
+//! - `cargo xtask coverage` measures branch and line coverage with
+//!   `cargo llvm-cov` and fails below the thresholds in `coverage`;
 //! - `cargo xtask help`, `--help` or `-h` prints usage.
 //!
 //! Any other subcommand or flag is a [`UsageError`]. Subcommands are the
-//! closed [`Command`] enum, so adding one (such as the planned `coverage`) is
-//! a new variant plus a match arm.
+//! closed [`Command`] enum, so adding one is a new variant plus a match arm.
 
 use std::fmt;
 
@@ -22,6 +23,7 @@ usage: cargo xtask <command>
 commands:
   trace           regenerate docs/traceability.md and list traceability problems
   trace --check   fail if any traceability problem exists or the report is stale
+  coverage        measure branch coverage (pinned nightly) and enforce thresholds
   help            show this message";
 
 /// What `trace` should do with the report.
@@ -38,6 +40,8 @@ pub enum TraceMode {
 pub enum Command {
     /// `trace [--check]`.
     Trace(TraceMode),
+    /// `coverage`.
+    Coverage,
     /// `help`.
     Help,
 }
@@ -59,6 +63,7 @@ pub fn parse<S: AsRef<str>>(args: &[S]) -> Result<Command, UsageError> {
         None => return Err(UsageError("missing command".to_owned())),
         Some("help" | "--help" | "-h") => Command::Help,
         Some("trace") => parse_trace(&mut iter)?,
+        Some("coverage") => Command::Coverage,
         Some(other) => return Err(UsageError(format!("unknown command `{other}`"))),
     };
     match iter.next() {
@@ -101,6 +106,7 @@ mod tests {
         );
         assert_eq!(parse(&["help"]), Ok(Command::Help));
         assert_eq!(parse(&["-h"]), Ok(Command::Help));
+        assert_eq!(parse(&["coverage"]), Ok(Command::Coverage));
     }
 
     #[test]
@@ -108,7 +114,7 @@ mod tests {
         let empty: [&str; 0] = [];
         assert!(parse(&empty).is_err());
         assert!(parse(&["bogus"]).is_err());
-        assert!(parse(&["coverage"]).is_err());
+        assert!(parse(&["coverage", "--check"]).is_err());
         assert!(parse(&["trace", "--chek"]).is_err());
         assert!(parse(&["trace", "--check", "x"]).is_err());
         assert!(parse(&["help", "x"]).is_err());

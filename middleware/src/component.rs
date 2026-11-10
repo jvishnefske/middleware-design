@@ -19,20 +19,20 @@
 
 #![forbid(unsafe_code)]
 
-pub mod config;
-pub mod state;
-pub mod passive;
 pub mod active;
+pub mod config;
 pub mod lifecycle;
+pub mod passive;
+pub mod state;
 
 use crate::error::InitError;
 
 // Re-export key traits and types
+pub use active::{ActiveComponent, CycleResult, Schedule};
 pub use config::{ComponentConfig, ConfigBuilder};
-pub use state::ComponentState;
-pub use passive::{PassiveComponent, Invocation, Response, ResponseStatus};
-pub use active::{ActiveComponent, Schedule, CycleResult};
 pub use lifecycle::{Lifecycle, LifecycleState};
+pub use passive::{Invocation, PassiveComponent, Response, ResponseStatus};
+pub use state::ComponentState;
 
 /// Type alias for component identifiers.
 ///
@@ -120,8 +120,8 @@ pub trait Component: Sized {
     /// Returns `InitError` if construction fails:
     /// - `InvalidConfig`: Configuration parameters invalid
     /// - `ResourceUnavailable`: Required resource not available
-    /// - `HardwareFailure`: Hardware initialization failed
-    /// - `Timeout`: Initialization timeout
+    /// - `DependencyFailed`: A dependency failed to initialize
+    /// - `HardwareFailed`: Hardware initialization failed
     fn new(config: Self::Config) -> Result<Self, InitError>;
 
     /// Get reference to component configuration.
@@ -186,6 +186,120 @@ mod tests {
         }
     }
 
+    /// Second component used to show NAME and ID are per type.
+    struct OtherComponent {
+        config: TestConfig,
+        state: TestState,
+    }
+
+    impl Component for OtherComponent {
+        type Config = TestConfig;
+        type State = TestState;
+        type Ports = ();
+
+        const NAME: &'static str = "OtherComponent";
+        const ID: ComponentId = ComponentId::MAX;
+
+        fn new(config: Self::Config) -> Result<Self, InitError> {
+            Ok(Self {
+                config,
+                state: TestState { counter: 1 },
+            })
+        }
+
+        fn config(&self) -> &Self::Config {
+            &self.config
+        }
+
+        fn state(&self) -> &Self::State {
+            &self.state
+        }
+    }
+
+    /// Compiles only if `C` names exactly these Config, State and Ports types.
+    fn assert_associated_types<C>()
+    where
+        C: Component<Config = TestConfig, State = TestState, Ports = TestPorts>,
+    {
+    }
+
+    /// Compiles only if the associated types meet the trait bounds.
+    fn assert_bounds<C: Component>()
+    where
+        C::Config: ComponentConfig + Default + Clone,
+        C::State: ComponentState + Clone,
+    {
+    }
+
+    /// Reads metadata through the trait bound only, as a framework would.
+    fn metadata<C: Component>() -> (&'static str, ComponentId) {
+        (C::NAME, C::ID)
+    }
+
+    /// Associated types are checked at compile time by the generic helpers;
+    /// the accessors return references of those associated types.
+    /// Verifies: REQ-CMP-001
+    #[test]
+    fn component_has_config_state_and_ports_types() {
+        assert_associated_types::<TestComponent>();
+        assert_bounds::<TestComponent>();
+        assert_bounds::<OtherComponent>();
+        let component = TestComponent::new(TestConfig { value: 7 }).unwrap();
+        let config: &<TestComponent as Component>::Config = component.config();
+        let state: &<TestComponent as Component>::State = component.state();
+        assert_eq!(config.value, 7);
+        assert_eq!(state.counter, 0);
+        let other = OtherComponent::new(TestConfig { value: 3 }).unwrap();
+        assert_eq!(other.config().value, 3);
+        assert_eq!(other.state().counter, 1);
+        // Ports is a pure type-level association; a zero-sized marker is valid.
+        assert_eq!(
+            core::mem::size_of::<<TestComponent as Component>::Ports>(),
+            0
+        );
+        assert_eq!(
+            core::mem::size_of::<<OtherComponent as Component>::Ports>(),
+            0
+        );
+    }
+
+    /// NAME and ID are associated constants: they are usable in `const`
+    /// context (so known at compile time, with no instance), differ per
+    /// type, and the `ComponentId` boundary `u16::MAX` is representable.
+    /// Verifies: REQ-CMP-002
+    #[test]
+    fn component_has_static_name_and_id() {
+        const NAME: &str = TestComponent::NAME;
+        const ID: ComponentId = TestComponent::ID;
+        const OTHER_ID: ComponentId = OtherComponent::ID;
+        assert_eq!(NAME, "TestComponent");
+        assert_eq!(ID, 42);
+        assert_eq!(OTHER_ID, u16::MAX);
+        assert_eq!(metadata::<TestComponent>(), ("TestComponent", 42));
+        assert_eq!(metadata::<OtherComponent>(), ("OtherComponent", u16::MAX));
+        assert_ne!(metadata::<TestComponent>(), metadata::<OtherComponent>());
+    }
+
+    /// The constructor signature is pinned by coercion to a function pointer
+    /// type; the test component's validity boundary (value <= 100) gives Ok
+    /// at 0 and 100 and `InitError::InvalidConfig` at 101 and `u32::MAX`.
+    /// Verifies: REQ-CMP-003
+    #[test]
+    fn component_new_returns_result_with_init_error() {
+        let constructor: fn(TestConfig) -> Result<TestComponent, InitError> =
+            <TestComponent as Component>::new;
+        for value in [0, 100] {
+            let component = constructor(TestConfig { value }).unwrap();
+            assert_eq!(component.config().value, value);
+        }
+        for value in [101, u32::MAX] {
+            assert!(matches!(
+                constructor(TestConfig { value }),
+                Err(InitError::InvalidConfig)
+            ));
+        }
+    }
+
     #[test]
     fn component_metadata() {
         assert_eq!(TestComponent::NAME, "TestComponent");
@@ -203,10 +317,7 @@ mod tests {
     fn component_new_invalid_config() {
         let config = TestConfig { value: 150 };
         let result = TestComponent::new(config);
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert_eq!(e, InitError::InvalidConfig);
-        }
+        assert!(matches!(result, Err(InitError::InvalidConfig)));
     }
 
     #[test]

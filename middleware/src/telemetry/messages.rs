@@ -171,11 +171,185 @@ impl StateMachineTelemetry {
 }
 
 // test code: a panic is a test failure, which is the intended reporting mechanism
-#[cfg_attr(test, allow(clippy::float_cmp))]
+#[cfg_attr(test, allow(clippy::float_cmp, clippy::expect_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::telemetry::framing::{FrameHeader, MessageType};
+    use minicbor::Decode;
 
+    /// Compile-time evidence: this only instantiates for types that
+    /// implement both `Encode<()>` and `Decode<'_, ()>`.
+    fn assert_cbor_codec<T>()
+    where
+        T: Encode<()> + for<'b> Decode<'b, ()>,
+    {
+    }
+
+    /// Encodes `msg` with minicbor's `&mut [u8]` slice writer (no allocation,
+    /// no `std` types) into `buf`, decodes it back from the written prefix and
+    /// returns the decoded value.
+    fn slice_round_trip<T>(msg: &T, buf: &mut [u8]) -> T
+    where
+        T: Encode<()> + for<'b> Decode<'b, ()>,
+    {
+        let capacity = buf.len();
+        let mut encoder = minicbor::Encoder::new(&mut buf[..]);
+        encoder.encode(msg).expect("message fits in scratch buffer");
+        let written = capacity - encoder.writer().len();
+        let bytes = buf.get(..written).expect("written <= capacity");
+        minicbor::decode(bytes).expect("encoded message decodes")
+    }
+
+    /// Every serialised telemetry type (the three messages, the frame header
+    /// and the message type enum) satisfies the `Encode` + `Decode` bounds;
+    /// a missing derive makes this test fail to compile.
+    /// Verifies: REQ-SER-003
+    #[test]
+    fn test_all_message_types_derive_encode_decode() {
+        assert_cbor_codec::<ControlTelemetry>();
+        assert_cbor_codec::<PidTelemetry>();
+        assert_cbor_codec::<StateMachineTelemetry>();
+        assert_cbor_codec::<FrameHeader>();
+        assert_cbor_codec::<MessageType>();
+    }
+
+    /// This module belongs to a `#![no_std]` crate, so only `core` is in
+    /// scope: the round trip below uses a stack array, minicbor's slice
+    /// writer and slice decoder, with no `std` or `alloc` type involved.
+    /// minicbor is built with `default-features = false` (no `std`).
+    /// Verifies: REQ-SER-002, REQ-SER-001
+    #[test]
+    fn test_no_std_slice_writer_round_trip() {
+        let mut buf = [0u8; 64];
+        let control = ControlTelemetry::new(1000, 10.0, 9.5, 2.5, 0.5);
+        assert_eq!(slice_round_trip(&control, &mut buf), control);
+        let pid = PidTelemetry::new(1.0, 0.5, 0.2, true);
+        assert_eq!(slice_round_trip(&pid, &mut buf), pid);
+        let sm = StateMachineTelemetry::new(3, 5000, 10000);
+        assert_eq!(slice_round_trip(&sm, &mut buf), sm);
+        // The free-function form writes into the slice too.
+        let mut out = [0u8; 64];
+        assert!(minicbor::encode(sm, &mut out[..]).is_ok());
+        assert_eq!(out.first(), Some(&0x83)); // CBOR array(3) head
+    }
+
+    /// CBOR wire format check: `StateMachineTelemetry::new(3, 5000, 10000)`
+    /// is the CBOR array `[3, 5000, 10000]`, i.e. `83 03 19 1388 19 2710`.
+    /// Verifies: REQ-SER-001, REQ-SER-012
+    #[test]
+    fn test_state_machine_telemetry_exact_cbor_bytes() {
+        let mut buf = [0u8; 32];
+        let sm = StateMachineTelemetry::new(3, 5000, 10000);
+        let mut encoder = minicbor::Encoder::new(&mut buf[..]);
+        encoder.encode(sm).expect("fits");
+        let written = 32 - encoder.writer().len();
+        assert_eq!(
+            buf.get(..written),
+            Some(&[0x83, 0x03, 0x19, 0x13, 0x88, 0x19, 0x27, 0x10][..])
+        );
+    }
+
+    /// Boundary and special values for `ControlTelemetry`: timestamp 0 and
+    /// `u64::MAX`, float extremes, infinities, negative zero and NaN all
+    /// round-trip bit-exactly.
+    /// Verifies: REQ-SER-010
+    #[test]
+    fn test_control_telemetry_boundary_round_trip() {
+        let specials = [
+            0.0f32,
+            -0.0,
+            f32::MIN,
+            f32::MAX,
+            f32::MIN_POSITIVE,
+            f32::EPSILON,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ];
+        for timestamp_ms in [0u64, 1, u64::MAX] {
+            for v in specials {
+                let msg = ControlTelemetry::new(timestamp_ms, v, -v, v, v);
+                let mut buf = [0u8; 64];
+                let back = slice_round_trip(&msg, &mut buf);
+                assert_eq!(back.timestamp_ms, timestamp_ms);
+                assert_eq!(back.setpoint.to_bits(), v.to_bits());
+                assert_eq!(back.measurement.to_bits(), (-v).to_bits());
+                assert_eq!(back.output.to_bits(), v.to_bits());
+                assert_eq!(back.error.to_bits(), v.to_bits());
+            }
+        }
+    }
+
+    /// Both values of the `saturated` flag and extreme / special term values
+    /// round-trip bit-exactly for `PidTelemetry`.
+    /// Verifies: REQ-SER-011
+    #[test]
+    fn test_pid_telemetry_boundary_round_trip() {
+        for saturated in [false, true] {
+            for v in [0.0f32, -0.0, f32::MAX, f32::MIN, f32::INFINITY, f32::NAN] {
+                let msg = PidTelemetry::new(v, -v, v, saturated);
+                let mut buf = [0u8; 32];
+                let back = slice_round_trip(&msg, &mut buf);
+                assert_eq!(back.p_term.to_bits(), v.to_bits());
+                assert_eq!(back.i_term.to_bits(), (-v).to_bits());
+                assert_eq!(back.d_term.to_bits(), v.to_bits());
+                assert_eq!(back.saturated, saturated);
+            }
+        }
+    }
+
+    /// `StateMachineTelemetry` round-trips at the integer boundaries of each
+    /// field (0 and the type maximum).
+    /// Verifies: REQ-SER-012
+    #[test]
+    fn test_state_machine_telemetry_boundary_round_trip() {
+        for state_id in [0u16, u16::MAX] {
+            for duration in [0u64, u64::MAX] {
+                for last in [0u64, u64::MAX] {
+                    let msg = StateMachineTelemetry::new(state_id, duration, last);
+                    let mut buf = [0u8; 32];
+                    assert_eq!(slice_round_trip(&msg, &mut buf), msg);
+                }
+            }
+        }
+    }
+
+    /// Fault injection: a truncated message (every strict prefix) and a
+    /// message with a wrongly typed field are rejected on decode.
+    /// Verifies: REQ-SER-001
+    #[test]
+    fn test_malformed_message_decode_errors() {
+        let msg = StateMachineTelemetry::new(u16::MAX, u64::MAX, u64::MAX);
+        let mut buf = [0u8; 32];
+        let capacity = buf.len();
+        let mut encoder = minicbor::Encoder::new(&mut buf[..]);
+        encoder.encode(msg).expect("fits");
+        let written = capacity - encoder.writer().len();
+        for cut in 0..written {
+            let prefix = buf.get(..cut).expect("cut < written");
+            assert!(minicbor::decode::<StateMachineTelemetry>(prefix).is_err());
+        }
+        // [true, 0, 0]: state_id must be an unsigned integer, not a bool.
+        let wrong_type = [0x83, 0xf5, 0x00, 0x00];
+        assert!(minicbor::decode::<StateMachineTelemetry>(&wrong_type).is_err());
+        // PidTelemetry with `saturated` encoded as integer 1 instead of a
+        // bool: take a valid encoding and replace the trailing `true` (0xf5).
+        let mut pid_buf = [0u8; 32];
+        let pid_cap = pid_buf.len();
+        let mut pid_encoder = minicbor::Encoder::new(&mut pid_buf[..]);
+        pid_encoder
+            .encode(PidTelemetry::new(1.0, 0.5, 0.2, true))
+            .expect("fits");
+        let pid_len = pid_cap - pid_encoder.writer().len();
+        let last = pid_buf.get_mut(pid_len - 1).expect("non-empty encoding");
+        assert_eq!(*last, 0xf5);
+        *last = 0x01;
+        let pid_wrong = pid_buf.get(..pid_len).expect("pid_len <= capacity");
+        assert!(minicbor::decode::<PidTelemetry>(pid_wrong).is_err());
+    }
+
+    /// Verifies: REQ-SER-010
     #[test]
     fn test_control_telemetry_new() {
         let telem = ControlTelemetry::new(1000, 10.0, 9.5, 2.5, 0.5);
@@ -186,6 +360,7 @@ mod tests {
         assert_eq!(telem.error, 0.5);
     }
 
+    /// Verifies: REQ-SER-011
     #[test]
     fn test_pid_telemetry_new() {
         let telem = PidTelemetry::new(1.0, 0.5, 0.2, false);
@@ -195,6 +370,7 @@ mod tests {
         assert!(!telem.saturated);
     }
 
+    /// Verifies: REQ-SER-012
     #[test]
     fn test_state_machine_telemetry_new() {
         let telem = StateMachineTelemetry::new(3, 5000, 10000);

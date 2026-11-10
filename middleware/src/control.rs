@@ -7,6 +7,10 @@
 //! - REQ-CTL-001: ControlBlock trait with update method
 //! - REQ-CTL-002: ControlBlock reset method
 //! - REQ-CTL-003: Immutable control block state
+//! - REQ-CTL-004: Non-finite inputs, non-positive or non-finite time steps
+//!   and non-finite results are reported as errors (see [`ControlError`];
+//!   invalid limits and filter parameters are reported as
+//!   [`ControlError::InvalidConfig`])
 //! - REQ-CTL-010 through REQ-CTL-014: PID controller
 //! - REQ-CTL-020 through REQ-CTL-023: Digital filters
 //! - REQ-CTL-030 through REQ-CTL-032: State-space models

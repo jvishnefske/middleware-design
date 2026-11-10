@@ -5,6 +5,14 @@
 //! # Traceability
 //! - REQ-CTL-040: RateLimiter with configurable rate limits
 //! - REQ-CTL-041: Saturator with min/max bounds
+//! - REQ-CTL-004: Non-finite inputs, invalid time steps and non-finite
+//!   results are reported as errors
+//!
+//! Both blocks check their configuration on every update and return
+//! `ControlError::InvalidConfig` for limits that cannot be applied (NaN
+//! limits, a rising limit below zero, a falling limit above zero, or a
+//! saturator minimum above its maximum), instead of panicking in
+//! `f32::clamp` or silently disabling the limit.
 
 use super::{ControlBlock, ControlError};
 
@@ -12,6 +20,17 @@ use super::{ControlBlock, ControlError};
 ///
 /// Constrains the rate of change of a signal, with separate limits for
 /// rising and falling edges.
+///
+/// # Errors
+/// `update` returns `InvalidInput` for a non-finite input, `InvalidDelta`
+/// for a zero, negative or non-finite `dt`, `InvalidConfig` if
+/// `rate_limit_up` is NaN or negative or `rate_limit_down` is NaN or
+/// positive (infinite limits are valid and mean "unlimited"), and
+/// `NumericalError` if the output overflows.
+///
+/// # Reset
+/// [`ControlBlock::reset`] sets the previous output to `0.0`, not to the
+/// `initial_output` passed to [`RateLimiter::new`].
 ///
 /// # Examples
 ///
@@ -75,6 +94,16 @@ impl ControlBlock for RateLimiter {
             return Err(ControlError::InvalidDelta);
         }
 
+        // Validate limits: a NaN limit would make `min`/`max` ignore it and a
+        // wrongly signed one would push the output against the input.
+        if self.rate_limit_up.is_nan()
+            || self.rate_limit_down.is_nan()
+            || self.rate_limit_up < 0.0
+            || self.rate_limit_down > 0.0
+        {
+            return Err(ControlError::InvalidConfig);
+        }
+
         // Compute maximum allowed change
         let max_increase = self.rate_limit_up * dt;
         let max_decrease = self.rate_limit_down * dt;
@@ -118,6 +147,13 @@ impl ControlBlock for RateLimiter {
 /// Signal saturator with min/max bounds.
 ///
 /// Clamps the input signal to specified minimum and maximum values.
+///
+/// # Errors
+/// `update` returns `InvalidInput` for a non-finite input, `InvalidDelta`
+/// for a zero, negative or non-finite `dt`, and `InvalidConfig` if `min` or
+/// `max` is NaN or `min > max` (where `f32::clamp` would panic). Infinite
+/// bounds are valid. The output needs no finiteness check: a finite input
+/// clamped to ordered, non-NaN bounds is always finite.
 ///
 /// # Examples
 ///
@@ -169,6 +205,10 @@ impl ControlBlock for Saturator {
             return Err(ControlError::InvalidDelta);
         }
 
+        if self.min.is_nan() || self.max.is_nan() || self.min > self.max {
+            return Err(ControlError::InvalidConfig);
+        }
+
         let output = input.clamp(self.min, self.max);
 
         Ok((self, output))
@@ -184,8 +224,10 @@ impl ControlBlock for Saturator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::block::fault_vectors::{BAD_DT, NON_FINITE, TINY_DT};
     use crate::test_support::assert_close;
 
+    /// Verifies: REQ-CTL-040
     #[test]
     fn test_rate_limiter_new() {
         let limiter = RateLimiter::new(10.0, -5.0, 0.0);
@@ -194,6 +236,7 @@ mod tests {
         assert_eq!(limiter.prev_output(), 0.0);
     }
 
+    /// Verifies: REQ-CTL-040
     #[test]
     fn test_rate_limiter_increase() {
         let limiter = RateLimiter::new(10.0, -5.0, 0.0);
@@ -207,6 +250,7 @@ mod tests {
         assert_close(output, 2.0);
     }
 
+    /// Verifies: REQ-CTL-040
     #[test]
     fn test_rate_limiter_decrease() {
         let limiter = RateLimiter::new(10.0, -5.0, 10.0);
@@ -220,6 +264,7 @@ mod tests {
         assert_close(output, 9.0);
     }
 
+    /// Verifies: REQ-CTL-040
     #[test]
     fn test_rate_limiter_within_limits() {
         let limiter = RateLimiter::new(10.0, -5.0, 5.0);
@@ -232,6 +277,7 @@ mod tests {
         assert_close(output, 5.0);
     }
 
+    /// Verifies: REQ-CTL-040
     #[test]
     fn test_rate_limiter_symmetric() {
         let limiter = RateLimiter::new(10.0, -10.0, 0.0);
@@ -243,6 +289,7 @@ mod tests {
         assert_close(output, 0.0); // 1.0 + (-10.0 * 0.1)
     }
 
+    /// Verifies: REQ-CTL-002, REQ-CTL-040
     #[test]
     fn test_rate_limiter_reset() {
         let limiter = RateLimiter::new(10.0, -5.0, 5.0);
@@ -254,6 +301,7 @@ mod tests {
         assert_eq!(limiter.prev_output(), 0.0);
     }
 
+    /// Verifies: REQ-CTL-004
     #[test]
     fn test_rate_limiter_invalid_input() {
         let limiter = RateLimiter::new(10.0, -5.0, 0.0);
@@ -268,6 +316,7 @@ mod tests {
         );
     }
 
+    /// Verifies: REQ-CTL-041
     #[test]
     fn test_saturator_new() {
         let saturator = Saturator::new(-10.0, 10.0);
@@ -275,6 +324,7 @@ mod tests {
         assert_eq!(saturator.max, 10.0);
     }
 
+    /// Verifies: REQ-CTL-041
     #[test]
     fn test_saturator_clamp_max() {
         let saturator = Saturator::new(-10.0, 10.0);
@@ -286,6 +336,7 @@ mod tests {
         assert_eq!(output, 10.0);
     }
 
+    /// Verifies: REQ-CTL-041
     #[test]
     fn test_saturator_clamp_min() {
         let saturator = Saturator::new(-10.0, 10.0);
@@ -297,6 +348,7 @@ mod tests {
         assert_eq!(output, -10.0);
     }
 
+    /// Verifies: REQ-CTL-041
     #[test]
     fn test_saturator_within_bounds() {
         let saturator = Saturator::new(-10.0, 10.0);
@@ -311,6 +363,7 @@ mod tests {
         assert_eq!(output, -5.0);
     }
 
+    /// Verifies: REQ-CTL-041
     #[test]
     fn test_saturator_at_bounds() {
         let saturator = Saturator::new(-10.0, 10.0);
@@ -322,6 +375,7 @@ mod tests {
         assert_eq!(output, -10.0);
     }
 
+    /// Verifies: REQ-CTL-002, REQ-CTL-041
     #[test]
     fn test_saturator_reset() {
         let saturator = Saturator::new(-10.0, 10.0);
@@ -331,6 +385,7 @@ mod tests {
         assert_eq!(saturator.max, 10.0);
     }
 
+    /// Verifies: REQ-CTL-004
     #[test]
     fn test_saturator_invalid_input() {
         let saturator = Saturator::new(-10.0, 10.0);
@@ -345,6 +400,7 @@ mod tests {
         );
     }
 
+    /// Verifies: REQ-CTL-041
     #[test]
     fn test_saturator_asymmetric() {
         let saturator = Saturator::new(0.0, 100.0);
@@ -357,5 +413,110 @@ mod tests {
 
         let (_, output) = saturator.update(150.0, 0.01).unwrap();
         assert_eq!(output, 100.0);
+    }
+
+    /// Runs one block through every invalid input and dt class.
+    fn assert_rejects_all<B: ControlBlock<Input = f32> + Copy>(b: B) {
+        for bad in NON_FINITE {
+            assert!(matches!(
+                b.update(bad, 0.1),
+                Err(ControlError::InvalidInput)
+            ));
+        }
+        for dt in BAD_DT {
+            assert!(
+                matches!(b.update(1.0, dt), Err(ControlError::InvalidDelta)),
+                "dt = {dt}"
+            );
+        }
+        assert!(b.update(1.0, TINY_DT).is_ok());
+    }
+
+    /// Rate limiter: every non-finite input and every invalid dt is rejected.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_rate_limiter_rejects_all_invalid_classes() {
+        assert_rejects_all(RateLimiter::new(10.0, -5.0, 0.0));
+    }
+
+    /// Saturator: every non-finite input and every invalid dt is rejected.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_saturator_rejects_all_invalid_classes() {
+        assert_rejects_all(Saturator::new(-1.0, 1.0));
+    }
+
+    /// Rate limiter output overflow (rising and falling) is reported as
+    /// `NumericalError`: with dt = 2 the limit times dt overflows to
+    /// infinity and the desired change MAX - (-MAX) is infinite too.
+    /// Verifies: REQ-CTL-004
+    #[test]
+    fn test_rate_limiter_overflow_is_numerical_error() {
+        let down = RateLimiter::new(1.0, -f32::MAX, f32::MAX);
+        assert_eq!(
+            down.update(-f32::MAX, 2.0),
+            Err(ControlError::NumericalError)
+        );
+        let up = RateLimiter::new(f32::MAX, -1.0, -f32::MAX);
+        assert_eq!(up.update(f32::MAX, 2.0), Err(ControlError::NumericalError));
+    }
+
+    /// Rate limiter limits that are NaN or wrongly signed are rejected with
+    /// `InvalidConfig` rather than a panic.
+    /// Verifies: REQ-CTL-005
+    #[test]
+    fn test_rate_limiter_invalid_limits_rejected() {
+        for l in [
+            RateLimiter::new(f32::NAN, -1.0, 0.0),
+            RateLimiter::new(1.0, f32::NAN, 0.0),
+            RateLimiter::new(-1.0, -1.0, 0.0),
+            RateLimiter::new(1.0, 1.0, 0.0),
+        ] {
+            assert_eq!(
+                l.update(5.0, 0.1),
+                Err(ControlError::InvalidConfig),
+                "{l:?}"
+            );
+        }
+    }
+
+    /// Boundary limits: zero rates hold the output, infinite rates pass the
+    /// input straight through, and a change exactly at the limit passes.
+    /// Verifies: REQ-CTL-040
+    #[test]
+    fn test_rate_limiter_boundary_limits() {
+        let hold = RateLimiter::new(0.0, 0.0, 3.0);
+        assert_eq!(hold.update(10.0, 0.1).unwrap().1, 3.0);
+        assert_eq!(hold.update(-10.0, 0.1).unwrap().1, 3.0);
+        let free = RateLimiter::new(f32::INFINITY, f32::NEG_INFINITY, 0.0);
+        assert_eq!(free.update(1.0e30, 0.1).unwrap().1, 1.0e30);
+        assert_eq!(free.update(-1.0e30, 0.1).unwrap().1, -1.0e30);
+        let exact = RateLimiter::new(4.0, -2.0, 0.0);
+        assert_eq!(exact.update(2.0, 0.5).unwrap().1, 2.0);
+        assert_eq!(exact.update(-1.0, 0.5).unwrap().1, -1.0);
+        // no change requested: output unchanged
+        assert_eq!(exact.update(0.0, 0.5).unwrap().1, 0.0);
+    }
+
+    /// Saturator bounds that `f32::clamp` would panic on are rejected with
+    /// `InvalidConfig`; equal and infinite bounds are valid.
+    /// Verifies: REQ-CTL-041, REQ-CTL-005
+    #[test]
+    fn test_saturator_invalid_and_boundary_bounds() {
+        for s in [
+            Saturator::new(1.0, -1.0),
+            Saturator::new(f32::NAN, 1.0),
+            Saturator::new(-1.0, f32::NAN),
+        ] {
+            assert_eq!(
+                s.update(0.0, 0.1),
+                Err(ControlError::InvalidConfig),
+                "{s:?}"
+            );
+        }
+        assert_eq!(Saturator::new(2.0, 2.0).update(-5.0, 0.1).unwrap().1, 2.0);
+        let open = Saturator::new(f32::NEG_INFINITY, f32::INFINITY);
+        assert_eq!(open.update(f32::MAX, 0.1).unwrap().1, f32::MAX);
+        assert_eq!(open.update(-f32::MAX, 0.1).unwrap().1, -f32::MAX);
     }
 }
