@@ -1,0 +1,252 @@
+# Attitude Controller Example Model
+# This demonstrates a complete working example of the middleware framework
+# including enums, components, state machines, and PID control blocks.
+#
+# Hook names (guard, action, on_enter, on_exit) become methods of the
+# generated ControllerStateMachine::Hooks trait, which the application
+# implements. Component commands become variants of AttitudeControllerCommand.
+
+version: "1.0"
+namespace: "attitude_control"
+
+# Requirements for traceability
+requirements:
+  - id: REQ-ATT-001
+    description: "System shall maintain stable attitude control"
+    level: C
+  - id: REQ-ATT-002
+    description: "System shall transition between operational modes"
+    level: C
+  - id: REQ-ATT-003
+    description: "PID controller shall regulate pitch angle"
+    level: C
+  - id: REQ-ATT-004
+    description: "System shall provide telemetry data"
+    level: C
+
+# Type definitions
+types:
+  enums:
+    # Control mode enumeration
+    - name: ControlMode
+      traces: [REQ-ATT-002]
+      repr: u8
+      variants:
+        - Standby
+        - Manual
+        - Stabilize
+        - Navigate
+
+    # System state enumeration
+    - name: SystemState
+      traces: [REQ-ATT-002]
+      repr: u8
+      variants:
+        - Initializing
+        - Ready
+        - Active
+        - Fault
+        - Shutdown
+
+    # State machine events
+    - name: SystemEvent
+      traces: [REQ-ATT-002]
+      repr: u8
+      variants:
+        - Initialize
+        - Start
+        - Stop
+        - FaultDetected
+        - FaultCleared
+        - ShutdownRequest
+
+  structs:
+    # Attitude measurement
+    - name: AttitudeMeasurement
+      traces: [REQ-ATT-001]
+      fields:
+        - name: roll
+          type: f32
+        - name: pitch
+          type: f32
+        - name: yaw
+          type: f32
+        - name: timestamp_ms
+          type: u64
+
+    # Control command
+    - name: ControlCommand
+      traces: [REQ-ATT-001]
+      fields:
+        - name: roll_cmd
+          type: f32
+        - name: pitch_cmd
+          type: f32
+        - name: yaw_cmd
+          type: f32
+
+# Message definitions
+messages:
+  - name: AttitudeSetpoint
+    traces: [REQ-ATT-001]
+    fields:
+      - name: roll_sp
+        type: f32
+      - name: pitch_sp
+        type: f32
+      - name: yaw_sp
+        type: f32
+      - name: timestamp_ms
+        type: u64
+
+  - name: ControlOutput
+    traces: [REQ-ATT-001]
+    fields:
+      - name: roll_output
+        type: f32
+      - name: pitch_output
+        type: f32
+      - name: yaw_output
+        type: f32
+
+  - name: TelemetryData
+    traces: [REQ-ATT-004]
+    fields:
+      - name: mode
+        type: u8
+      - name: state
+        type: u8
+      - name: pitch_error
+        type: f32
+      - name: timestamp_ms
+        type: u64
+
+# Port definitions
+ports:
+  - name: attitude_input
+    direction: input
+    message_type: AttitudeMeasurement
+
+  - name: setpoint_input
+    direction: input
+    message_type: AttitudeSetpoint
+
+  - name: control_output
+    direction: output
+    message_type: ControlOutput
+
+  - name: telemetry_output
+    direction: output
+    message_type: TelemetryData
+
+# Component definitions
+components:
+  - name: AttitudeController
+    traces: [REQ-ATT-001, REQ-ATT-002]
+    kind: active
+    state: SystemState
+    input_ports:
+      - attitude_input
+      - setpoint_input
+    output_ports:
+      - control_output
+      - telemetry_output
+    commands:
+      - arm
+      - disarm
+      - reset_fault
+    state_machine: ControllerStateMachine
+
+# Math block definitions
+math_blocks:
+  - name: pitch_pid
+    traces: [REQ-ATT-003]
+    kind: pid
+    config:
+      kp: 1.5
+      ki: 0.05
+      kd: 0.3
+      output_min: -1.0
+      output_max: 1.0
+      integral_min: -0.5
+      integral_max: 0.5
+
+  - name: roll_pid
+    traces: [REQ-ATT-003]
+    kind: pid
+    config:
+      kp: 1.5
+      ki: 0.05
+      kd: 0.3
+      output_min: -1.0
+      output_max: 1.0
+      integral_min: -0.5
+      integral_max: 0.5
+
+  - name: yaw_pid
+    traces: [REQ-ATT-003]
+    kind: pid
+    config:
+      kp: 2.0
+      ki: 0.1
+      kd: 0.5
+      output_min: -1.0
+      output_max: 1.0
+      integral_min: -0.5
+      integral_max: 0.5
+
+  - name: attitude_filter
+    traces: [REQ-ATT-001]
+    kind: low_pass
+    config:
+      cutoff_hz: 10.0
+      sample_rate_hz: 100.0
+
+# State machine definitions
+state_machines:
+  - name: ControllerStateMachine
+    traces: [REQ-ATT-002]
+    state_type: SystemState
+    initial_state: Initializing
+    events: SystemEvent
+    states:
+      - name: Initializing
+        on_enter: initialize_sensors
+      - name: Ready
+        on_enter: prepare_control_loop
+      - name: Active
+        on_enter: enable_control
+        on_exit: disable_control
+      - name: Fault
+        on_enter: log_fault
+      - name: Shutdown
+        on_exit: cleanup_resources
+    transitions:
+      - from: Initializing
+        event: Initialize
+        to: Ready
+      - from: Ready
+        event: Start
+        to: Active
+        guard: sensors_calibrated
+        action: arm_actuators
+      - from: Active
+        event: Stop
+        to: Ready
+        action: disarm_actuators
+      - from: Active
+        event: FaultDetected
+        to: Fault
+      - from: Fault
+        event: FaultCleared
+        to: Ready
+        guard: fault_resolved
+      - from: Ready
+        event: ShutdownRequest
+        to: Shutdown
+      - from: Active
+        event: ShutdownRequest
+        to: Shutdown
+      - from: Fault
+        event: ShutdownRequest
+        to: Shutdown

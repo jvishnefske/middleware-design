@@ -1,0 +1,23 @@
+[package]
+name = "middleware"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Model-based development framework for embedded control systems"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+nalgebra = { version = "0.33", default-features = false, features = ["libm"] }
+minicbor = { version = "0.24", default-features = false, features = ["derive"] }
+middleware-codegen = { path = "../middleware-codegen", optional = true }
+
+[dev-dependencies]
+middleware-codegen = { path = "../middleware-codegen" }
+
+[features]
+default = []
+std = ["nalgebra/std", "minicbor/std"]
+codegen = ["middleware-codegen"]
+traceability-runtime = []

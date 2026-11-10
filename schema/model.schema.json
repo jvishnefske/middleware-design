@@ -1,0 +1,384 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://middleware.example.com/model.schema.json",
+  "title": "Middleware Model Schema",
+  "description": "JSON Schema for model-based development YAML files",
+  "type": "object",
+  "required": ["version", "namespace"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "namespace": {
+      "type": "string",
+      "description": "Namespace for generated code",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "requirements": {
+      "type": "array",
+      "description": "List of requirements for traceability",
+      "items": {
+        "$ref": "#/definitions/requirement"
+      }
+    },
+    "types": {
+      "type": "object",
+      "description": "Type definitions",
+      "properties": {
+        "enums": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/enumDef"
+          }
+        },
+        "structs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/structDef"
+          }
+        }
+      }
+    },
+    "messages": {
+      "type": "array",
+      "description": "Message type definitions",
+      "items": {
+        "$ref": "#/definitions/messageDef"
+      }
+    },
+    "ports": {
+      "type": "array",
+      "description": "Port definitions",
+      "items": {
+        "$ref": "#/definitions/portDef"
+      }
+    },
+    "components": {
+      "type": "array",
+      "description": "Component definitions",
+      "items": {
+        "$ref": "#/definitions/component"
+      }
+    },
+    "math_blocks": {
+      "type": "array",
+      "description": "Math block definitions",
+      "items": {
+        "$ref": "#/definitions/mathBlock"
+      }
+    },
+    "state_machines": {
+      "type": "array",
+      "description": "State machine definitions",
+      "items": {
+        "$ref": "#/definitions/stateMachine"
+      }
+    }
+  },
+  "definitions": {
+    "requirement": {
+      "type": "object",
+      "description": "Requirement definition for traceability",
+      "required": ["id", "description", "level"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Requirement identifier",
+          "pattern": "^REQ-[A-Z]+-[0-9]+$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description"
+        },
+        "level": {
+          "type": "string",
+          "description": "DO-178C level",
+          "enum": ["A", "B", "C", "D"]
+        }
+      }
+    },
+    "traces": {
+      "type": "array",
+      "description": "Traceability to requirements",
+      "items": {
+        "type": "string",
+        "pattern": "^REQ-[A-Z]+-[0-9]+$"
+      }
+    },
+    "enumDef": {
+      "type": "object",
+      "description": "Enum type definition",
+      "required": ["name", "repr", "variants"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Enum name",
+          "pattern": "^[A-Z][a-zA-Z0-9]*$"
+        },
+        "traces": {
+          "$ref": "#/definitions/traces"
+        },
+        "repr": {
+          "type": "string",
+          "description": "Integer representation",
+          "enum": ["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"]
+        },
+        "variants": {
+          "type": "array",
+          "description": "Enum variants",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][a-zA-Z0-9]*$"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "structDef": {
+      "type": "object",
+      "description": "Struct type definition",
+      "required": ["name", "fields"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Struct name",
+          "pattern": "^[A-Z][a-zA-Z0-9]*$"
+        },
+        "traces": {
+          "$ref": "#/definitions/traces"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/field"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "description": "Struct or message field",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Field name",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "type": {
+          "type": "string",
+          "description": "Rust type"
+        }
+      }
+    },
+    "messageDef": {
+      "type": "object",
+      "description": "Message type definition",
+      "required": ["name", "fields"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Message name",
+          "pattern": "^[A-Z][a-zA-Z0-9]*$"
+        },
+        "traces": {
+          "$ref": "#/definitions/traces"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/field"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "portDef": {
+      "type": "object",
+      "description": "Port definition",
+      "required": ["name", "direction", "message_type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Port name",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "direction": {
+          "type": "string",
+          "description": "Port direction",
+          "enum": ["input", "output"]
+        },
+        "message_type": {
+          "type": "string",
+          "description": "Message type name"
+        }
+      }
+    },
+    "component": {
+      "type": "object",
+      "description": "Component definition",
+      "required": ["name", "kind"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Component name",
+          "pattern": "^[A-Z][a-zA-Z0-9]*$"
+        },
+        "traces": {
+          "$ref": "#/definitions/traces"
+        },
+        "kind": {
+          "type": "string",
+          "description": "Component kind",
+          "enum": ["passive", "active"]
+        },
+        "state": {
+          "type": "string",
+          "description": "State type name"
+        },
+        "input_ports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "output_ports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "description": "Command names; each becomes a PascalCase variant of the generated <Component>Command enum",
+          "items": {
+            "type": "string",
+            "pattern": "^([a-z][a-z0-9_]*|[A-Z][a-zA-Z0-9]*)$"
+          }
+        },
+        "state_machine": {
+          "type": "string",
+          "description": "Associated state machine name"
+        }
+      }
+    },
+    "mathBlock": {
+      "type": "object",
+      "description": "Math block definition",
+      "required": ["name", "kind", "config"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Math block name",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "traces": {
+          "$ref": "#/definitions/traces"
+        },
+        "kind": {
+          "type": "string",
+          "description": "Math block kind",
+          "enum": ["pid", "low_pass", "high_pass", "notch", "state_space"]
+        },
+        "config": {
+          "type": "object",
+          "description": "Configuration parameters"
+        }
+      }
+    },
+    "stateMachine": {
+      "type": "object",
+      "description": "State machine definition",
+      "required": ["name", "state_type", "initial_state", "events", "states", "transitions"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "State machine name",
+          "pattern": "^[A-Z][a-zA-Z0-9]*$"
+        },
+        "traces": {
+          "$ref": "#/definitions/traces"
+        },
+        "state_type": {
+          "type": "string",
+          "description": "State enum type name"
+        },
+        "initial_state": {
+          "type": "string",
+          "description": "Initial state variant name"
+        },
+        "events": {
+          "type": "string",
+          "description": "Event enum type name"
+        },
+        "states": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/stateDef"
+          },
+          "minItems": 1
+        },
+        "transitions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/transition"
+          }
+        }
+      }
+    },
+    "stateDef": {
+      "type": "object",
+      "description": "State definition",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "State variant name",
+          "pattern": "^[A-Z][a-zA-Z0-9]*$"
+        },
+        "on_enter": {
+          "type": "string",
+          "description": "On-enter action; becomes a method of the generated Hooks trait",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "on_exit": {
+          "type": "string",
+          "description": "On-exit action; becomes a method of the generated Hooks trait",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "description": "State transition definition",
+      "required": ["from", "event", "to"],
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "Source state variant name"
+        },
+        "event": {
+          "type": "string",
+          "description": "Event variant name"
+        },
+        "to": {
+          "type": "string",
+          "description": "Target state variant name"
+        },
+        "guard": {
+          "type": "string",
+          "description": "Guard condition; becomes a `&self -> bool` method of the generated Hooks trait",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "action": {
+          "type": "string",
+          "description": "Transition action; becomes a method of the generated Hooks trait",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
+      }
+    }
+  }
+}
