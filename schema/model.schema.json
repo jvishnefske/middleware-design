@@ -39,7 +39,8 @@
             "$ref": "#/definitions/structDef"
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "messages": {
       "type": "array",
@@ -97,7 +98,8 @@
           "description": "DO-178C level",
           "enum": ["A", "B", "C", "D"]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "traces": {
       "type": "array",
@@ -134,7 +136,8 @@
           },
           "minItems": 1
         }
-      }
+      },
+      "additionalProperties": false
     },
     "structDef": {
       "type": "object",
@@ -156,7 +159,8 @@
           },
           "minItems": 1
         }
-      }
+      },
+      "additionalProperties": false
     },
     "field": {
       "type": "object",
@@ -172,7 +176,8 @@
           "type": "string",
           "description": "Rust type"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "messageDef": {
       "type": "object",
@@ -194,7 +199,8 @@
           },
           "minItems": 1
         }
-      }
+      },
+      "additionalProperties": false
     },
     "portDef": {
       "type": "object",
@@ -215,7 +221,8 @@
           "type": "string",
           "description": "Message type name"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "component": {
       "type": "object",
@@ -263,7 +270,8 @@
           "type": "string",
           "description": "Associated state machine name"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "mathBlock": {
       "type": "object",
@@ -285,9 +293,57 @@
         },
         "config": {
           "type": "object",
-          "description": "Configuration parameters"
+          "description": "Configuration parameters; which keys apply depends on the block kind",
+          "properties": {
+            "kp": {
+              "type": "number",
+              "description": "PID proportional gain"
+            },
+            "ki": {
+              "type": "number",
+              "description": "PID integral gain"
+            },
+            "kd": {
+              "type": "number",
+              "description": "PID derivative gain"
+            },
+            "output_min": {
+              "type": "number",
+              "description": "PID minimum output"
+            },
+            "output_max": {
+              "type": "number",
+              "description": "PID maximum output"
+            },
+            "integral_min": {
+              "type": "number",
+              "description": "PID minimum integral (anti-windup)"
+            },
+            "integral_max": {
+              "type": "number",
+              "description": "PID maximum integral (anti-windup)"
+            },
+            "cutoff_hz": {
+              "type": "number",
+              "description": "Filter cutoff frequency in Hz"
+            },
+            "sample_rate_hz": {
+              "type": "number",
+              "description": "Filter sample rate in Hz"
+            },
+            "bandwidth_hz": {
+              "type": "number",
+              "description": "Notch filter bandwidth in Hz"
+            },
+            "notch_hz": {
+              "type": "number",
+              "description": "Notch filter centre frequency in Hz"
+            }
+          },
+          "additionalProperties": false
         }
-      }
+      },
+      "additionalProperties": false
     },
     "stateMachine": {
       "type": "object",
@@ -327,7 +383,8 @@
             "$ref": "#/definitions/transition"
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "stateDef": {
       "type": "object",
@@ -349,7 +406,8 @@
           "description": "On-exit action; becomes a method of the generated Hooks trait",
           "pattern": "^[a-z][a-z0-9_]*$"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "transition": {
       "type": "object",
@@ -378,7 +436,9 @@
           "description": "Transition action; becomes a method of the generated Hooks trait",
           "pattern": "^[a-z][a-z0-9_]*$"
         }
-      }
+      },
+      "additionalProperties": false
     }
-  }
+  },
+  "additionalProperties": false
 }

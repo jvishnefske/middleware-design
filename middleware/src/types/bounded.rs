@@ -47,10 +47,11 @@ impl<T, const N: usize> BoundedVec<T, N> {
     ///
     /// - REQ-TYP-022: Result on overflow
     pub fn push(&mut self, value: T) -> Result<(), SerializeError> {
-        if self.len >= N {
-            return Err(SerializeError::BufferTooSmall);
-        }
-        self.data[self.len] = Some(value);
+        let slot = self
+            .data
+            .get_mut(self.len)
+            .ok_or(SerializeError::BufferTooSmall)?;
+        *slot = Some(value);
         self.len += 1;
         Ok(())
     }
@@ -65,7 +66,7 @@ impl<T, const N: usize> BoundedVec<T, N> {
             return None;
         }
         self.len -= 1;
-        self.data[self.len].take()
+        self.data.get_mut(self.len).and_then(Option::take)
     }
 
     /// Get the current length of the vector.
@@ -101,8 +102,8 @@ impl<T, const N: usize> BoundedVec<T, N> {
     ///
     /// - REQ-TYP-020: BoundedVec operations
     pub fn clear(&mut self) {
-        for i in 0..self.len {
-            self.data[i] = None;
+        for slot in self.data.iter_mut().take(self.len) {
+            *slot = None;
         }
         self.len = 0;
     }
@@ -114,7 +115,7 @@ impl<T, const N: usize> BoundedVec<T, N> {
     /// - REQ-TYP-020: BoundedVec operations
     pub fn get(&self, index: usize) -> Option<&T> {
         if index < self.len {
-            self.data[index].as_ref()
+            self.data.get(index).and_then(Option::as_ref)
         } else {
             None
         }
@@ -127,7 +128,7 @@ impl<T, const N: usize> BoundedVec<T, N> {
     /// - REQ-TYP-020: BoundedVec operations
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         if index < self.len {
-            self.data[index].as_mut()
+            self.data.get_mut(index).and_then(Option::as_mut)
         } else {
             None
         }
@@ -139,7 +140,7 @@ impl<T, const N: usize> BoundedVec<T, N> {
     ///
     /// - REQ-TYP-020: BoundedVec operations
     pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.data[..self.len].iter().filter_map(|x| x.as_ref())
+        self.data.iter().take(self.len).filter_map(|x| x.as_ref())
     }
 
     /// Get a mutable iterator over the elements.
@@ -148,7 +149,7 @@ impl<T, const N: usize> BoundedVec<T, N> {
     ///
     /// - REQ-TYP-020: BoundedVec operations
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
-        self.data[..self.len].iter_mut().filter_map(|x| x.as_mut())
+        self.data.iter_mut().take(self.len).filter_map(|x| x.as_mut())
     }
 }
 
@@ -184,24 +185,6 @@ impl<const N: usize> BoundedString<N> {
         }
     }
 
-    /// Create a bounded string from a string slice.
-    ///
-    /// Returns an error if the string is too long.
-    ///
-    /// # Traceability
-    ///
-    /// - REQ-TYP-022: Result on overflow
-    pub fn from_str(s: &str) -> Result<Self, SerializeError> {
-        let bytes = s.as_bytes();
-        if bytes.len() > N {
-            return Err(SerializeError::BufferTooSmall);
-        }
-        let mut result = Self::new();
-        result.data[..bytes.len()].copy_from_slice(bytes);
-        result.len = bytes.len();
-        Ok(result)
-    }
-
     /// Push a character to the end of the string.
     ///
     /// Returns an error if the capacity is exceeded.
@@ -214,13 +197,7 @@ impl<const N: usize> BoundedString<N> {
         let ch_str = ch.encode_utf8(&mut buf);
         let ch_bytes = ch_str.as_bytes();
 
-        if self.len + ch_bytes.len() > N {
-            return Err(SerializeError::BufferTooSmall);
-        }
-
-        self.data[self.len..self.len + ch_bytes.len()].copy_from_slice(ch_bytes);
-        self.len += ch_bytes.len();
-        Ok(())
+        self.append_bytes(ch_bytes)
     }
 
     /// Push a string slice to the end of the string.
@@ -231,13 +208,26 @@ impl<const N: usize> BoundedString<N> {
     ///
     /// - REQ-TYP-022: Result on overflow
     pub fn push_str(&mut self, s: &str) -> Result<(), SerializeError> {
-        let bytes = s.as_bytes();
-        if self.len + bytes.len() > N {
-            return Err(SerializeError::BufferTooSmall);
-        }
+        self.append_bytes(s.as_bytes())
+    }
 
-        self.data[self.len..self.len + bytes.len()].copy_from_slice(bytes);
-        self.len += bytes.len();
+    /// Append raw bytes that the caller guarantees are a complete UTF-8
+    /// sequence (always the encoding of whole `char`s or a whole `&str`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SerializeError::BufferTooSmall`] if the bytes do not fit in
+    /// the remaining capacity; the string is left unchanged.
+    fn append_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+        let end = self
+            .len
+            .checked_add(bytes.len())
+            .ok_or(SerializeError::BufferTooSmall)?;
+        self.data
+            .get_mut(self.len..end)
+            .ok_or(SerializeError::BufferTooSmall)?
+            .copy_from_slice(bytes);
+        self.len = end;
         Ok(())
     }
 
@@ -279,12 +269,17 @@ impl<const N: usize> BoundedString<N> {
 
     /// Get the string as a string slice.
     ///
+    /// The stored bytes are always valid UTF-8, because they are only ever
+    /// written as whole `char` encodings or whole `&str` slices (`push`,
+    /// `push_str`, `from_str`) and truncated only to zero (`clear`). The UTF-8
+    /// check is still performed; if that invariant were ever broken this
+    /// returns the empty string rather than panicking.
+    ///
     /// # Traceability
     ///
     /// - REQ-TYP-021: BoundedString operations
     pub fn as_str(&self) -> &str {
-        // Safety: We only insert valid UTF-8 via push and push_str
-        core::str::from_utf8(&self.data[..self.len]).unwrap()
+        core::str::from_utf8(self.as_bytes()).unwrap_or_default()
     }
 
     /// Get the string as a byte slice.
@@ -293,7 +288,41 @@ impl<const N: usize> BoundedString<N> {
     ///
     /// - REQ-TYP-021: BoundedString operations
     pub fn as_bytes(&self) -> &[u8] {
-        &self.data[..self.len]
+        self.data.get(..self.len).unwrap_or_default()
+    }
+}
+
+impl<const N: usize> core::str::FromStr for BoundedString<N> {
+    type Err = SerializeError;
+
+    /// Create a bounded string from a string slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SerializeError::BufferTooSmall`] if `s` is longer than `N`
+    /// bytes.
+    ///
+    /// # Traceability
+    ///
+    /// - REQ-TYP-022: Result on overflow
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut result = Self::new();
+        result.push_str(s)?;
+        Ok(result)
+    }
+}
+
+impl<const N: usize> TryFrom<&str> for BoundedString<N> {
+    type Error = SerializeError;
+
+    /// Same as [`FromStr::from_str`](core::str::FromStr::from_str).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SerializeError::BufferTooSmall`] if `s` is longer than `N`
+    /// bytes.
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        s.parse()
     }
 }
 
@@ -309,9 +338,12 @@ impl<const N: usize> core::fmt::Display for BoundedString<N> {
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::str::FromStr;
 
     extern crate std;
 
@@ -399,6 +431,42 @@ mod tests {
 
         let result: Result<BoundedString<3>, _> = BoundedString::from_str("hello");
         assert_eq!(result, Err(SerializeError::BufferTooSmall));
+
+        let parsed: BoundedString<5> = "hello".parse().unwrap();
+        assert_eq!(parsed.as_str(), "hello");
+        assert_eq!(BoundedString::<5>::try_from("hello"), Ok(parsed));
+        assert_eq!(
+            BoundedString::<4>::try_from("hello"),
+            Err(SerializeError::BufferTooSmall)
+        );
+    }
+
+    #[test]
+    fn test_bounded_string_push_overflow_leaves_unchanged() {
+        let mut s: BoundedString<2> = BoundedString::from_str("a").unwrap();
+        // 'λ' is two bytes; only one byte of capacity remains.
+        assert_eq!(s.push('λ'), Err(SerializeError::BufferTooSmall));
+        assert_eq!(s.as_str(), "a");
+        assert!(s.push('b').is_ok());
+        assert_eq!(s.push('c'), Err(SerializeError::BufferTooSmall));
+        assert_eq!(s.as_bytes(), b"ab");
+    }
+
+    #[test]
+    fn test_bounded_vec_iter_mut_and_zero_capacity() {
+        let mut vec: BoundedVec<i32, 3> = BoundedVec::new();
+        vec.push(1).unwrap();
+        vec.push(2).unwrap();
+        for v in vec.iter_mut() {
+            *v *= 10;
+        }
+        assert_eq!(vec.get(0), Some(&10));
+        assert_eq!(vec.get(1), Some(&20));
+        assert_eq!(vec.get_mut(2), None);
+
+        let mut empty: BoundedVec<i32, 0> = BoundedVec::new();
+        assert_eq!(empty.push(1), Err(SerializeError::BufferTooSmall));
+        assert_eq!(empty.pop(), None);
     }
 
     #[test]

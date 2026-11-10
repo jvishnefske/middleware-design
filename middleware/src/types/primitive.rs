@@ -216,9 +216,12 @@ pub type U64<U> = Quantity<u64, U>;
 /// - REQ-TYP-011: bool support
 pub type Bool<U> = Quantity<bool, U>;
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::float_cmp))]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::assert_close;
     use crate::types::unit::{Seconds, MetersPerSecond};
 
     extern crate std;
@@ -247,7 +250,7 @@ mod tests {
         let t1 = F32::<Seconds>::new(1.0);
         let t2 = F32::<Seconds>::new(2.0);
         let sum = t1 + t2;
-        assert_eq!(sum.value(), 3.0);
+        assert_close(sum.value(), 3.0);
     }
 
     #[test]
@@ -255,28 +258,28 @@ mod tests {
         let t1 = F32::<Seconds>::new(5.0);
         let t2 = F32::<Seconds>::new(2.0);
         let diff = t1 - t2;
-        assert_eq!(diff.value(), 3.0);
+        assert_close(diff.value(), 3.0);
     }
 
     #[test]
     fn test_quantity_mul_scalar() {
         let time = F32::<Seconds>::new(2.0);
         let scaled = time * 3.0;
-        assert_eq!(scaled.value(), 6.0);
+        assert_close(scaled.value(), 6.0);
     }
 
     #[test]
     fn test_quantity_div_scalar() {
         let time = F32::<Seconds>::new(6.0);
         let scaled = time / 2.0;
-        assert_eq!(scaled.value(), 3.0);
+        assert_close(scaled.value(), 3.0);
     }
 
     #[test]
     fn test_quantity_neg() {
         let vel = F32::<MetersPerSecond>::new(5.0);
         let neg_vel = -vel;
-        assert_eq!(neg_vel.value(), -5.0);
+        assert_close(neg_vel.value(), -5.0);
     }
 
     #[test]
@@ -288,7 +291,7 @@ mod tests {
     #[test]
     fn test_quantity_clone() {
         let t1 = F32::<Seconds>::new(1.5);
-        let t2 = t1.clone();
+        let t2 = Clone::clone(&t1);
         assert_eq!(t1, t2);
     }
 

@@ -1,0 +1,7 @@
+error: Code generation failed: Component 'Ctrl' lists port 'inp' as Output but it is declared input
+ --> tests/ui/component_wrong_port_direction.rs:1:1
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/component_wrong_port_direction.yaml");
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `middleware_codegen::middleware_model` (in Nightly builds, run with -Z macro-backtrace for more info)

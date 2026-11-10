@@ -1,0 +1,64 @@
+# Back-to-back fixture for middleware/tests/codegen_back_to_back.rs:
+# several rows share one (state, event) pair.
+#
+# Both the generated `step` and the runtime `StateMachine` scan rows in
+# table order and fire the first matching row whose guard is absent or
+# passes; if rows matched but every guard failed the result is Remained.
+# This fixture exercises that rule:
+# - (Idle, Go) has a guarded row followed by an unguarded fallback row;
+# - (Low, Go) has two guarded rows, so both guards can fail (Remained);
+# - Stop has no row from Idle (Ignored);
+# - Low has an exit hook and High an entry hook, and rows carry actions,
+#   so every failure kind can be injected.
+
+version: "1.0"
+namespace: "b2b_dup"
+
+types:
+  enums:
+    - name: DupState
+      repr: u8
+      variants: [Idle, Low, High]
+    - name: DupEvent
+      repr: u8
+      variants: [Go, Stop]
+
+state_machines:
+  - name: DupMachine
+    state_type: DupState
+    initial_state: Idle
+    events: DupEvent
+    states:
+      - name: Idle
+      - name: Low
+        on_exit: leave_low
+      - name: High
+        on_enter: arrive_high
+    transitions:
+      - from: Idle
+        event: Go
+        to: Low
+        guard: low_ok
+        action: take_low
+      - from: Idle
+        event: Go
+        to: High
+        action: take_high
+      - from: Low
+        event: Go
+        to: Idle
+        guard: low_ok
+      - from: Low
+        event: Go
+        to: High
+        guard: high_ok
+        action: take_high
+      - from: High
+        event: Go
+        to: Idle
+      - from: High
+        event: Stop
+        to: Idle
+      - from: Low
+        event: Stop
+        to: Idle

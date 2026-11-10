@@ -15,6 +15,10 @@
 //! The schema is compiled without any remote or file reference resolution;
 //! only the schema's internal `#/definitions/...` references are used.
 //!
+//! The schema is closed: every object, at the top level and nested, sets
+//! `additionalProperties: false`, so an unknown or misspelled key (for
+//! example `gaurd:` for `guard:`) is a violation rather than being ignored.
+//!
 //! This check is structural. The semantic checks in
 //! `parser::validate_model` still run afterwards, during code generation.
 //!
@@ -134,6 +138,8 @@ pub fn validate_value(instance: &serde_json::Value) -> Result<(), ValidationErro
 }
 
 #[cfg(test)]
+// test code: a panic is a test failure, the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing))]
 mod tests {
     use super::*;
 
@@ -227,6 +233,59 @@ components:
         assert!(paths.contains(&"/components/0/kind"), "{:?}", paths); // bad enum
         let rendered = ValidationError::Violations(v).to_string();
         assert!(rendered.contains("/components/0/kind"), "{}", rendered);
+    }
+
+    #[test]
+    fn unknown_key_is_rejected_with_path() {
+        let yaml = r#"
+version: "1.0"
+namespace: "demo"
+types:
+  enums:
+    - name: S
+      repr: u8
+      variants: [A, B]
+    - name: E
+      repr: u8
+      variants: [Go]
+state_machines:
+  - name: M
+    state_type: S
+    initial_state: A
+    events: E
+    states:
+      - name: A
+    transitions:
+      - from: A
+        event: Go
+        to: B
+        gaurd: ready
+"#;
+        let v = violations(yaml);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].instance_path, "/state_machines/0/transitions/0");
+        assert!(v[0].message.contains("gaurd"), "{}", v[0].message);
+    }
+
+    #[test]
+    fn unknown_top_level_and_config_keys_are_rejected() {
+        let yaml = r#"
+version: "1.0"
+namespace: "demo"
+extra: true
+math_blocks:
+  - name: p
+    kind: pid
+    config:
+      kp: 1.0
+      k_p: 2.0
+"#;
+        let v = violations(yaml);
+        let mut paths: Vec<&str> = v.iter().map(|x| x.instance_path.as_str()).collect();
+        paths.sort_unstable();
+        assert_eq!(paths, vec!["", "/math_blocks/0/config"], "{:?}", v);
+        assert!(v.iter().any(|x| x.message.contains("'extra'")), "{:?}", v);
+        assert!(v.iter().any(|x| x.message.contains("'k_p'")), "{:?}", v);
     }
 
     #[test]

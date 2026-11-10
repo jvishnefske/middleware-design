@@ -12,7 +12,7 @@
 #![forbid(unsafe_code)]
 
 use core::time::Duration;
-use crate::error::CycleError;
+use crate::error::{CycleError, InitError};
 
 /// Scheduling parameters for active components.
 ///
@@ -59,20 +59,46 @@ impl Schedule {
 
     /// Create a schedule with rate in Hz.
     ///
+    /// The period is `1000 / frequency_hz` milliseconds, truncated toward
+    /// zero to a whole number of milliseconds (so 33.33 Hz gives 30 ms, and
+    /// any frequency above 1000 Hz gives a zero period).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InitError::InvalidConfig`] if `frequency_hz` is NaN,
+    /// infinite, zero or negative, or if the resulting period does not fit
+    /// in a [`Duration`].
+    ///
     /// # Examples
     ///
     /// ```
+    /// use core::time::Duration;
+    /// use middleware::InitError;
     /// use middleware::component::active::Schedule;
     ///
-    /// let schedule = Schedule::from_hz(100.0, 5);
+    /// let schedule = Schedule::from_hz(100.0, 5)?;
     /// // Executes at 100 Hz (10ms period)
+    /// assert_eq!(schedule.rate, Duration::from_millis(10));
+    ///
+    /// assert_eq!(Schedule::from_hz(0.0, 5), Err(InitError::InvalidConfig));
+    /// # Ok::<(), InitError>(())
     /// ```
-    pub fn from_hz(frequency_hz: f32, priority: u8) -> Self {
-        let period_ms = (1000.0 / frequency_hz) as u64;
-        Self {
+    pub fn from_hz(frequency_hz: f32, priority: u8) -> Result<Self, InitError> {
+        if !frequency_hz.is_finite() || frequency_hz <= 0.0 {
+            return Err(InitError::InvalidConfig);
+        }
+        // The period expressed in milliseconds is converted as though it were
+        // seconds, so `as_secs` yields the whole-millisecond count truncated
+        // toward zero. The integer part of a finite `f32` is exact, so this is
+        // a lossless truncation; out-of-range values are rejected by
+        // `try_from_secs_f32` rather than saturated.
+        let period_ms = Duration::try_from_secs_f32(1000.0 / frequency_hz)
+            .map_err(|_| InitError::InvalidConfig)?
+            .as_secs();
+        Ok(Self {
             rate: Duration::from_millis(period_ms),
             priority,
-        }
+        })
     }
 }
 
@@ -111,7 +137,7 @@ pub enum CycleResult {
 ///
 /// impl ActiveComponent for MyActiveComponent {
 ///     fn schedule(&self) -> Schedule {
-///         Schedule::from_hz(100.0, 5)
+///         Schedule::new(Duration::from_millis(10), 5)
 ///     }
 ///
 ///     fn run_cycle(&mut self) -> Result<CycleResult, CycleError> {
@@ -157,6 +183,8 @@ pub trait ActiveComponent {
     fn run_cycle(&mut self) -> Result<CycleResult, CycleError>;
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,7 +205,7 @@ mod tests {
 
     impl ActiveComponent for TestActiveComponent {
         fn schedule(&self) -> Schedule {
-            Schedule::from_hz(100.0, 5)
+            Schedule::new(Duration::from_millis(10), 5)
         }
 
         fn run_cycle(&mut self) -> Result<CycleResult, CycleError> {
@@ -187,7 +215,7 @@ mod tests {
 
             self.counter += 1;
 
-            if self.counter % 10 == 0 {
+            if self.counter.is_multiple_of(10) {
                 Ok(CycleResult::YieldedEarly)
             } else {
                 Ok(CycleResult::Nominal)
@@ -204,15 +232,35 @@ mod tests {
 
     #[test]
     fn schedule_from_hz() {
-        let schedule = Schedule::from_hz(100.0, 10);
+        let schedule = Schedule::from_hz(100.0, 10).unwrap();
         assert_eq!(schedule.rate, Duration::from_millis(10));
         assert_eq!(schedule.priority, 10);
     }
 
     #[test]
     fn schedule_from_hz_fractional() {
-        let schedule = Schedule::from_hz(33.33, 1);
+        let schedule = Schedule::from_hz(33.33, 1).unwrap();
         assert_eq!(schedule.rate, Duration::from_millis(30));
+    }
+
+    #[test]
+    fn schedule_from_hz_truncates_sub_millisecond_period() {
+        let schedule = Schedule::from_hz(2000.0, 1).unwrap();
+        assert_eq!(schedule.rate, Duration::ZERO);
+        let schedule = Schedule::from_hz(1.0, 1).unwrap();
+        assert_eq!(schedule.rate, Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn schedule_from_hz_rejects_invalid_frequency() {
+        for bad in [0.0, -0.0, -10.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(Schedule::from_hz(bad, 1), Err(InitError::InvalidConfig));
+        }
+        // A positive subnormal frequency gives a period too long for Duration.
+        assert_eq!(
+            Schedule::from_hz(f32::MIN_POSITIVE / 2.0, 1),
+            Err(InitError::InvalidConfig)
+        );
     }
 
     #[test]
@@ -259,7 +307,7 @@ mod tests {
 
     #[test]
     fn schedule_is_copy() {
-        let s1 = Schedule::from_hz(50.0, 3);
+        let s1 = Schedule::from_hz(50.0, 3).unwrap();
         let s2 = s1;
         assert_eq!(s1, s2);
     }

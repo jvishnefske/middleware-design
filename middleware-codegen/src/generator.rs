@@ -78,6 +78,19 @@ pub fn generate_code(model: &Model) -> Result<TokenStream, String> {
     })
 }
 
+/// Returns the first item that repeats an earlier one under `same`.
+///
+/// The scan is in order; the returned item is the later of the two equal
+/// items (the first whose predecessor list already contains an equal item).
+/// Uses only iterators, so it cannot index out of bounds.
+fn first_duplicate<T>(items: &[T], same: impl Fn(&T, &T) -> bool) -> Option<&T> {
+    items
+        .iter()
+        .enumerate()
+        .find(|(i, item)| items.iter().take(*i).any(|earlier| same(earlier, item)))
+        .map(|(_, item)| item)
+}
+
 /// Builds a `#[doc = "Traces: ..."]` attribute, or nothing if `traces` is empty.
 fn traces_doc(traces: &[String]) -> TokenStream {
     if traces.is_empty() {
@@ -89,6 +102,11 @@ fn traces_doc(traces: &[String]) -> TokenStream {
 }
 
 /// Generates enum definitions.
+///
+/// Each enum gets explicit discriminants `0..COUNT` in declaration order, the
+/// `COUNT` and `ALL` constants, a `const fn to_repr(self)` returning the
+/// discriminant as the `repr` type through an exhaustive `match` (no `as`
+/// cast), and `impl From<Enum> for <repr>` delegating to it.
 ///
 /// # Traceability
 /// - REQ-FSM-001: States as enums with repr
@@ -106,6 +124,9 @@ fn generate_enums(enums: &[EnumDef]) -> TokenStream {
 
         let variant_count = e.variants.len();
         let variant_names: Vec<_> = e.variants.iter().map(|v| format_ident!("{}", v)).collect();
+        let discriminants: Vec<Literal> =
+            (0..variant_count).map(Literal::usize_unsuffixed).collect();
+        let to_repr_doc = format!("Discriminant of `self` as `{}`, without an `as` cast.", e.repr);
 
         quote! {
             #traces
@@ -123,6 +144,19 @@ fn generate_enums(enums: &[EnumDef]) -> TokenStream {
                 pub const ALL: [Self; #variant_count] = [
                     #(Self::#variant_names),*
                 ];
+
+                #[doc = #to_repr_doc]
+                pub const fn to_repr(self) -> #repr {
+                    match self {
+                        #(Self::#variant_names => #discriminants),*
+                    }
+                }
+            }
+
+            impl ::core::convert::From<#name> for #repr {
+                fn from(value: #name) -> Self {
+                    value.to_repr()
+                }
             }
         }
     }).collect();
@@ -352,6 +386,8 @@ fn generate_traceability(model: &Model) -> TokenStream {
 }
 
 #[cfg(test)]
+// test code: a panic is a test failure, the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 mod tests {
     use super::*;
     use crate::parser::parse_model;
@@ -397,6 +433,34 @@ types:
         assert!(code_str.contains("pub struct MyData"));
         assert!(code_str.contains("value"));
         assert!(code_str.contains("f32"));
+    }
+
+    #[test]
+    fn first_duplicate_returns_later_of_equal_items() {
+        let same = |a: &(u8, char), b: &(u8, char)| a.0 == b.0;
+        assert_eq!(first_duplicate(&[(1, 'a'), (2, 'b'), (1, 'c')], same), Some(&(1, 'c')));
+        assert_eq!(first_duplicate(&[(1, 'a'), (2, 'b')], same), None);
+        assert_eq!(first_duplicate::<(u8, char)>(&[], same), None);
+    }
+
+    #[test]
+    fn enum_conversion_is_a_match_not_a_cast() {
+        let yaml = r#"
+version: "1.0"
+namespace: "test"
+types:
+  enums:
+    - name: Mode
+      repr: u16
+      variants: [Off, On]
+"#;
+        let model = parse_model(yaml).unwrap();
+        let code = generate_code(&model).unwrap().to_string();
+        assert!(code.contains("pub const fn to_repr (self) -> u16"), "{}", code);
+        assert!(code.contains("Self :: On => 1"), "{}", code);
+        assert!(code.contains("From < Mode > for u16"), "{}", code);
+        // Doc strings mention "as"; an actual cast would render as `as u16`.
+        assert!(!code.contains(" as u16 ") && !code.contains(" as usize "), "{}", code);
     }
 
     #[test]

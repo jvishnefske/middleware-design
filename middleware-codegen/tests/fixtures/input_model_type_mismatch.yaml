@@ -1,0 +1,8 @@
+# trybuild compile-fail fixture: see tests/ui/input_model_type_mismatch.rs
+version: "1.0"
+namespace: "t"
+math_blocks:
+  - name: p
+    kind: pid
+    config:
+      kp: high

@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn test_error_clone() {
         let err = PortError::Timeout;
-        let cloned = err.clone();
+        let cloned = Clone::clone(&err);
         assert_eq!(err, cloned);
     }
 

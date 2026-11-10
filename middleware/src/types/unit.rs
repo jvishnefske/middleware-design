@@ -115,19 +115,23 @@ mod tests {
 
     #[test]
     fn test_unit_default() {
-        let _s = Seconds::default();
-        let _ms = Milliseconds::default();
-        let _rad = Radians::default();
-        let _deg = Degrees::default();
-        let _mps = MetersPerSecond::default();
-        let _rps = RadiansPerSecond::default();
-        let _dim = Dimensionless::default();
+        // Exercise `Default` through the `Unit` bound, as generic code does.
+        fn default_unit<U: Unit>() -> U {
+            U::default()
+        }
+        assert_eq!(default_unit::<Seconds>(), Seconds);
+        assert_eq!(default_unit::<Milliseconds>(), Milliseconds);
+        assert_eq!(default_unit::<Radians>(), Radians);
+        assert_eq!(default_unit::<Degrees>(), Degrees);
+        assert_eq!(default_unit::<MetersPerSecond>(), MetersPerSecond);
+        assert_eq!(default_unit::<RadiansPerSecond>(), RadiansPerSecond);
+        assert_eq!(default_unit::<Dimensionless>(), Dimensionless);
     }
 
     #[test]
     fn test_unit_clone() {
         let s1 = Seconds;
-        let s2 = s1.clone();
+        let s2 = Clone::clone(&s1);
         assert_eq!(s1, s2);
     }
 

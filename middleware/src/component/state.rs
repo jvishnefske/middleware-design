@@ -125,7 +125,7 @@ mod tests {
         let state2 = state1.clone().with_counter(20);
 
         assert_eq!(state2.counter, 20);
-        assert_eq!(state2.active, true);
+        assert!(state2.active);
     }
 
     #[test]
@@ -135,6 +135,6 @@ mod tests {
             .with_active(true);
 
         assert_eq!(state.counter, 100);
-        assert_eq!(state.active, true);
+        assert!(state.active);
     }
 }

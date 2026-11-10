@@ -1,0 +1,7 @@
+error: Code generation failed: Component 'Ctrl' lists port 'inp' twice
+ --> tests/ui/component_port_listed_twice.rs:1:1
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/component_port_listed_twice.yaml");
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `middleware_codegen::middleware_model` (in Nightly builds, run with -Z macro-backtrace for more info)

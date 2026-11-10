@@ -41,6 +41,17 @@ pub enum PortDirection {
     Output = 1,
 }
 
+impl From<PortDirection> for u8 {
+    /// Returns the direction's wire value, equal to its `#[repr(u8)]`
+    /// discriminant.
+    fn from(direction: PortDirection) -> Self {
+        match direction {
+            PortDirection::Input => 0,
+            PortDirection::Output => 1,
+        }
+    }
+}
+
 impl PortDirection {
     /// Check if this is an input port.
     pub const fn is_input(self) -> bool {
@@ -59,8 +70,8 @@ mod tests {
 
     #[test]
     fn port_direction_values() {
-        assert_eq!(PortDirection::Input as u8, 0);
-        assert_eq!(PortDirection::Output as u8, 1);
+        assert_eq!(u8::from(PortDirection::Input), 0);
+        assert_eq!(u8::from(PortDirection::Output), 1);
     }
 
     #[test]

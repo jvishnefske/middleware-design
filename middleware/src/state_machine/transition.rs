@@ -10,6 +10,7 @@
 //! - REQ-FSM-013: Transition tables are compile-time constant arrays
 
 use super::{Event, State};
+use crate::error::StateMachineError;
 
 /// Function type for guard conditions.
 ///
@@ -31,8 +32,10 @@ pub type GuardFn<C> = fn(context: &C) -> bool;
 /// - `context`: Mutable reference to the state machine context
 ///
 /// # Returns
-/// `Ok(())` on success, `Err(())` if the action failed
-pub type ActionFn<C> = fn(context: &mut C) -> Result<(), ()>;
+/// `Ok(())` on success, or a [`StateMachineError`] (conventionally
+/// [`StateMachineError::ActionFailed`]) if the action failed. The state
+/// machine reports any such error as `FsmError::ActionFailed`.
+pub type ActionFn<C> = fn(context: &mut C) -> Result<(), StateMachineError>;
 
 /// A state machine transition.
 ///
@@ -57,8 +60,8 @@ pub type ActionFn<C> = fn(context: &mut C) -> Result<(), ()>;
 /// # impl MyContext { fn new() -> Self { Self { initialized: true } } }
 /// # impl State for MyState {
 /// #     type Context = MyContext;
-/// #     fn on_enter(&self, _context: &mut MyContext) -> Result<(), ()> { Ok(()) }
-/// #     fn on_exit(&self, _context: &mut MyContext) -> Result<(), ()> { Ok(()) }
+/// #     fn on_enter(&self, _context: &mut MyContext) -> Result<(), middleware::LifecycleError> { Ok(()) }
+/// #     fn on_exit(&self, _context: &mut MyContext) -> Result<(), middleware::LifecycleError> { Ok(()) }
 /// # }
 ///
 /// const TRANSITIONS: [Transition<MyState, MyEvent>; 1] = [
@@ -92,8 +95,8 @@ pub type ActionFn<C> = fn(context: &mut C) -> Result<(), ()>;
 /// # impl MyContext { fn new() -> Self { Self { initialized: true } } }
 /// # impl State for MyState {
 /// #     type Context = MyContext;
-/// #     fn on_enter(&self, _context: &mut MyContext) -> Result<(), ()> { Ok(()) }
-/// #     fn on_exit(&self, _context: &mut MyContext) -> Result<(), ()> { Ok(()) }
+/// #     fn on_enter(&self, _context: &mut MyContext) -> Result<(), middleware::LifecycleError> { Ok(()) }
+/// #     fn on_exit(&self, _context: &mut MyContext) -> Result<(), middleware::LifecycleError> { Ok(()) }
 /// # }
 ///
 /// fn is_ready(context: &MyContext) -> bool {
@@ -173,8 +176,12 @@ where
     /// - `context`: Mutable reference to the state machine context
     ///
     /// # Returns
-    /// `Ok(())` if there is no action or the action succeeds, `Err(())` otherwise
-    pub fn execute_action(&self, context: &mut S::Context) -> Result<(), ()> {
+    /// `Ok(())` if there is no action or the action succeeds.
+    ///
+    /// # Errors
+    /// Returns the [`StateMachineError`] produced by the action, unchanged, if
+    /// the action fails.
+    pub fn execute_action(&self, context: &mut S::Context) -> Result<(), StateMachineError> {
         match self.action {
             Some(action_fn) => action_fn(context),
             None => Ok(()),
@@ -185,6 +192,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::LifecycleError;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
@@ -201,11 +209,11 @@ mod tests {
     impl State for TestState {
         type Context = TestContext;
 
-        fn on_enter(&self, _context: &mut Self::Context) -> Result<(), ()> {
+        fn on_enter(&self, _context: &mut Self::Context) -> Result<(), LifecycleError> {
             Ok(())
         }
 
-        fn on_exit(&self, _context: &mut Self::Context) -> Result<(), ()> {
+        fn on_exit(&self, _context: &mut Self::Context) -> Result<(), LifecycleError> {
             Ok(())
         }
     }
@@ -224,7 +232,7 @@ mod tests {
         context.ready
     }
 
-    fn mark_action_executed(context: &mut TestContext) -> Result<(), ()> {
+    fn mark_action_executed(context: &mut TestContext) -> Result<(), StateMachineError> {
         context.action_executed = true;
         Ok(())
     }
@@ -317,5 +325,30 @@ mod tests {
 
         assert!(transition.execute_action(&mut context).is_ok());
         assert!(!context.action_executed);
+    }
+
+    fn failing_action(_context: &mut TestContext) -> Result<(), StateMachineError> {
+        Err(StateMachineError::ActionFailed)
+    }
+
+    #[test]
+    fn test_transition_action_error_propagated() {
+        let transition = Transition {
+            source: TestState::Idle,
+            event: TestEvent::Start,
+            target: TestState::Running,
+            guard: None,
+            action: Some(failing_action),
+        };
+
+        let mut context = TestContext {
+            ready: false,
+            action_executed: false,
+        };
+
+        assert_eq!(
+            transition.execute_action(&mut context),
+            Err(StateMachineError::ActionFailed)
+        );
     }
 }

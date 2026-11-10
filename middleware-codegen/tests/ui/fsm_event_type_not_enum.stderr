@@ -1,0 +1,7 @@
+error: Code generation failed: State machine 'M': event type 'Nope' is not a model enum
+ --> tests/ui/fsm_event_type_not_enum.rs:1:1
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/fsm_event_type_not_enum.yaml");
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `middleware_codegen::middleware_model` (in Nightly builds, run with -Z macro-backtrace for more info)

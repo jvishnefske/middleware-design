@@ -206,9 +206,12 @@ pub trait ControlGuard {
     fn evaluate(&self, context: &Self::Context) -> bool;
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::float_cmp))]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::assert_close;
 
     #[test]
     fn test_threshold_guard_above() {
@@ -242,22 +245,22 @@ mod tests {
 
         let (guard, satisfied) = guard.update(2.0);
         assert!(!satisfied);
-        assert_eq!(guard.elapsed, 2.0);
+        assert_close(guard.elapsed, 2.0);
 
         let (guard, satisfied) = guard.update(2.0);
         assert!(!satisfied);
-        assert_eq!(guard.elapsed, 4.0);
+        assert_close(guard.elapsed, 4.0);
 
         let (guard, satisfied) = guard.update(2.0);
         assert!(satisfied);
-        assert_eq!(guard.elapsed, 6.0);
+        assert_close(guard.elapsed, 6.0);
     }
 
     #[test]
     fn test_timed_guard_reset() {
         let guard = TimedGuard::new(5.0);
         let (guard, _) = guard.update(3.0);
-        assert_eq!(guard.elapsed, 3.0);
+        assert_close(guard.elapsed, 3.0);
 
         let guard = guard.reset();
         assert_eq!(guard.elapsed, 0.0);

@@ -400,6 +400,8 @@ impl ControlBlock for NotchFilter {
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,17 +426,17 @@ mod tests {
         let lpf = LowPassFilter::new(0.5);
 
         let (lpf, output) = lpf.update(1.0, 0.01).unwrap();
-        assert_eq!(output, 0.5); // 0.5 * 1.0 + 0.5 * 0.0
+        assert!((output - 0.5).abs() < EPSILON); // 0.5 * 1.0 + 0.5 * 0.0
 
         let (_, output) = lpf.update(1.0, 0.01).unwrap();
-        assert_eq!(output, 0.75); // 0.5 * 1.0 + 0.5 * 0.5
+        assert!((output - 0.75).abs() < EPSILON); // 0.5 * 1.0 + 0.5 * 0.5
     }
 
     #[test]
     fn test_lowpass_reset() {
         let lpf = LowPassFilter::new(0.5);
         let (lpf, _) = lpf.update(1.0, 0.01).unwrap();
-        assert_ne!(lpf.state(), 0.0);
+        assert!((lpf.state() - 0.5).abs() < EPSILON);
 
         let lpf = lpf.reset();
         assert_eq!(lpf.state(), 0.0);

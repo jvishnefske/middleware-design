@@ -1,0 +1,7 @@
+error: Code generation failed: Component 'Ctrl' state 'Missing' must be a model enum when no state machine is linked
+ --> tests/ui/component_state_not_enum.rs:1:1
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/component_state_not_enum.yaml");
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `middleware_codegen::middleware_model` (in Nightly builds, run with -Z macro-backtrace for more info)

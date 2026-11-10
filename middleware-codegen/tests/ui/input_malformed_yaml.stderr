@@ -1,0 +1,5 @@
+error: YAML parse error: did not find expected ',' or ']' at line 4 column 1, while parsing a flow sequence at line 3 column 12
+ --> tests/ui/input_malformed_yaml.rs:1:39
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/input_malformed_yaml.yaml");
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

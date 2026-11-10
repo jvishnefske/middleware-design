@@ -15,9 +15,11 @@ use minicbor::{encode, Encode};
 /// particularly during CBOR encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufferError {
-    /// Buffer capacity exceeded during encoding
+    /// Buffer capacity exceeded during encoding: the CBOR writer reached the
+    /// end of the `SIZE`-byte buffer before the message was complete.
     BufferOverflow,
-    /// CBOR encoding error
+    /// CBOR encoding error raised by the message's `Encode` implementation
+    /// itself (a custom or message error), not by running out of space.
     EncodeError,
 }
 
@@ -29,7 +31,7 @@ pub enum BufferError {
 ///
 /// # Traceability
 ///
-/// - REQ-SER-021: Fixed-size TelemetryBuffer<N>
+/// - REQ-SER-021: Fixed-size `TelemetryBuffer<N>`
 ///
 /// # Type Parameters
 ///
@@ -90,7 +92,14 @@ impl<const SIZE: usize> TelemetryBuffer<SIZE> {
     /// # Returns
     ///
     /// - `Ok(())` if encoding succeeds
-    /// - `Err(BufferError)` if encoding fails (buffer overflow or encode error)
+    ///
+    /// # Errors
+    ///
+    /// - [`BufferError::BufferOverflow`] if the encoded message does not fit
+    ///   in `SIZE` bytes (minicbor reports this as a write error,
+    ///   `EndOfSlice`, from the slice writer)
+    /// - [`BufferError::EncodeError`] for any other encoding failure reported
+    ///   by the message's `Encode` implementation
     ///
     /// # Traceability
     ///
@@ -103,7 +112,13 @@ impl<const SIZE: usize> TelemetryBuffer<SIZE> {
         // so after encoding the writer holds the *unwritten* tail of the
         // buffer. Bytes written is therefore capacity minus what remains.
         let mut encoder = encode::Encoder::new(&mut self.data[..]);
-        encoder.encode(msg).map_err(|_| BufferError::EncodeError)?;
+        encoder.encode(msg).map_err(|e| {
+            if e.is_write() {
+                BufferError::BufferOverflow
+            } else {
+                BufferError::EncodeError
+            }
+        })?;
         let remaining = encoder.writer().len();
         self.len = SIZE.saturating_sub(remaining);
 
@@ -123,7 +138,7 @@ impl<const SIZE: usize> TelemetryBuffer<SIZE> {
     ///
     /// - REQ-SER-021: as_bytes() method
     pub fn as_bytes(&self) -> &[u8] {
-        &self.data[..self.len]
+        self.data.get(..self.len).unwrap_or_default()
     }
 
     /// Returns the length of the encoded data in bytes.
@@ -167,6 +182,8 @@ impl<const SIZE: usize> Default for TelemetryBuffer<SIZE> {
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,8 +205,7 @@ mod tests {
         let result = buffer.encode(&msg);
         assert!(result.is_ok());
         assert!(!buffer.is_empty());
-        assert!(buffer.len() > 0);
-        assert!(buffer.len() <= 128);
+                assert!(buffer.len() <= 128);
     }
 
     #[test]
@@ -291,6 +307,66 @@ mod tests {
         let msg = ControlTelemetry::new(1000, 10.0, 9.5, 2.5, 0.5);
 
         let result = buffer.encode(&msg);
-        assert!(result.is_err());
+        assert_eq!(result, Err(BufferError::BufferOverflow));
+        assert_eq!(buffer.len(), 0);
+        assert!(buffer.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn test_buffer_overflow_boundary() {
+        let msg = ControlTelemetry::new(1000, 10.0, 9.5, 2.5, 0.5);
+        let needed = encoded_len(&msg);
+        assert!(needed > 8 && needed <= 64);
+
+        // Ample capacity succeeds with exactly `needed` bytes.
+        let mut ample = TelemetryBuffer::<64>::new();
+        assert_eq!(ample.encode(&msg), Ok(()));
+        assert_eq!(ample.len(), needed);
+
+        // Too little capacity is reported as overflow, not a generic encode
+        // error, and leaves the buffer empty even after a prior success.
+        let mut small = TelemetryBuffer::<8>::new();
+        assert_eq!(small.encode(&msg), Err(BufferError::BufferOverflow));
+        assert!(small.is_empty());
+
+        // The underlying minicbor slice writer signals one byte short as a
+        // write error, which is what `encode` maps to `BufferOverflow`.
+        let mut scratch = [0u8; 64];
+        let short = scratch.get_mut(..needed - 1).unwrap();
+        assert!(minicbor::encode(msg, short).is_err_and(|e| e.is_write()));
+    }
+
+    #[test]
+    fn test_overflow_after_success_resets_len() {
+        let short = ControlTelemetry::new(0, 0.0, 0.0, 0.0, 0.0);
+        let long = ControlTelemetry::new(u64::MAX, 10.0, 9.5, 2.5, 0.5);
+        // `long` needs more bytes than `short` (wider timestamp and floats).
+        let mut buffer = TelemetryBuffer::<26>::new();
+        assert!(encoded_len(&short) <= 26 && encoded_len(&long) > 26);
+        buffer.encode(&short).unwrap();
+        assert!(!buffer.is_empty());
+        assert_eq!(buffer.encode(&long), Err(BufferError::BufferOverflow));
+        assert!(buffer.is_empty());
+    }
+
+    /// A message whose `Encode` implementation fails on its own, without
+    /// touching the writer, so the error is not a write error.
+    struct FailingMessage;
+
+    impl Encode<()> for FailingMessage {
+        fn encode<W: minicbor::encode::Write>(
+            &self,
+            _e: &mut minicbor::Encoder<W>,
+            _ctx: &mut (),
+        ) -> Result<(), minicbor::encode::Error<W::Error>> {
+            Err(minicbor::encode::Error::message("deliberate failure"))
+        }
+    }
+
+    #[test]
+    fn test_non_write_error_is_encode_error() {
+        let mut buffer = TelemetryBuffer::<128>::new();
+        assert_eq!(buffer.encode(&FailingMessage), Err(BufferError::EncodeError));
+        assert!(buffer.is_empty());
     }
 }

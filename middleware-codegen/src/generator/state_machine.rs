@@ -10,7 +10,11 @@
 //!   row carrying `Option<Guard>` and `Option<Action>`.
 //! - `const fn find_transition`, `on_enter` and `on_exit` lookups. `on_enter`
 //!   and `on_exit` are exhaustive matches over every variant of the state
-//!   enum, so they cannot panic.
+//!   enum, so they cannot panic. `find_transition` walks the table with a
+//!   slice pattern (`[row, tail @ ..]`) rather than indexing, and
+//!   `Transition::matches` compares states and events through the enums'
+//!   generated `const fn to_repr`, so the emitted code has no indexing and no
+//!   `as` casts.
 //! - A `Hooks` trait with an associated `Error` type, one
 //!   `fn <guard>(&self) -> bool` per guard and one
 //!   `fn <action>(&mut self) -> Result<(), Self::Error>` per action. The
@@ -42,7 +46,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
 use super::naming::{pascal_ident, snake_ident};
-use super::traces_doc;
+use super::{first_duplicate, traces_doc};
 use crate::model::{EnumDef, StateDef, StateMachine};
 
 /// Generates code for every state machine in the model.
@@ -137,13 +141,8 @@ fn validate_references(fsm: &StateMachine, states: &EnumDef, events: &EnumDef) -
         require_variant(states, &t.to, &fsm.name)?;
         require_variant(events, &t.event, &fsm.name)
     })?;
-    match fsm
-        .states
-        .iter()
-        .enumerate()
-        .find(|(i, s)| fsm.states[..*i].iter().any(|p| p.name == s.name))
-    {
-        Some((_, dup)) => Err(format!("State machine '{}': state '{}' defined twice", fsm.name, dup.name)),
+    match first_duplicate(&fsm.states, |a, b| a.name == b.name) {
+        Some(dup) => Err(format!("State machine '{}': state '{}' defined twice", fsm.name, dup.name)),
         None => Ok(()),
     }
 }
@@ -227,24 +226,18 @@ pub fn generate_state_machine(fsm: &StateMachine, enums: &[EnumDef]) -> Result<T
         .iter()
         .map(|a| snake_ident(a, "action"))
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some((i, v)) = guard_variants
-        .iter()
-        .enumerate()
-        .find(|(i, v)| guard_variants[..*i].contains(v))
-    {
+    let named_guards: Vec<(&String, &Ident)> = hooks.guards.iter().zip(&guard_variants).collect();
+    if let Some((g, v)) = first_duplicate(&named_guards, |a, b| a.1 == b.1) {
         return Err(format!(
             "State machine '{}': guard '{}' collides with another guard as '{}'",
-            fsm.name, hooks.guards[i], v
+            fsm.name, g, v
         ));
     }
-    if let Some((i, v)) = action_variants
-        .iter()
-        .enumerate()
-        .find(|(i, v)| action_variants[..*i].contains(v))
-    {
+    let named_actions: Vec<(&String, &Ident)> = hooks.actions.iter().zip(&action_variants).collect();
+    if let Some((a, v)) = first_duplicate(&named_actions, |a, b| a.1 == b.1) {
         return Err(format!(
             "State machine '{}': action '{}' collides with another action as '{}'",
-            fsm.name, hooks.actions[i], v
+            fsm.name, a, v
         ));
     }
 
@@ -379,7 +372,7 @@ pub fn generate_state_machine(fsm: &StateMachine, enums: &[EnumDef]) -> Result<T
             impl Transition {
                 /// Returns `true` if this row starts at `current` and is triggered by `event`.
                 pub const fn matches(&self, current: #state_type, event: #event_type) -> bool {
-                    self.from as usize == current as usize && self.event as usize == event as usize
+                    self.from.to_repr() == current.to_repr() && self.event.to_repr() == event.to_repr()
                 }
             }
 
@@ -390,12 +383,12 @@ pub fn generate_state_machine(fsm: &StateMachine, enums: &[EnumDef]) -> Result<T
 
             /// Returns the first row matching `current` and `event`, ignoring guards.
             pub const fn find_transition(current: #state_type, event: #event_type) -> Option<Transition> {
-                let mut i = 0;
-                while i < TRANSITION_COUNT {
-                    if TRANSITIONS[i].matches(current, event) {
-                        return Some(TRANSITIONS[i]);
+                let mut rest: &[Transition] = &TRANSITIONS;
+                while let [row, tail @ ..] = rest {
+                    if row.matches(current, event) {
+                        return Some(*row);
                     }
-                    i += 1;
+                    rest = tail;
                 }
                 None
             }
@@ -498,6 +491,8 @@ pub fn generate_state_machine(fsm: &StateMachine, enums: &[EnumDef]) -> Result<T
 }
 
 #[cfg(test)]
+// test code: a panic is a test failure, the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::indexing_slicing))]
 mod tests {
     use super::*;
     use crate::parser::parse_model;

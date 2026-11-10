@@ -1,0 +1,2 @@
+# trybuild compile-fail fixture: see tests/ui/schema_missing_required.rs
+version: "1.0"

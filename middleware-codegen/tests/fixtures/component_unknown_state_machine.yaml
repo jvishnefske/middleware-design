@@ -1,0 +1,7 @@
+# trybuild compile-fail fixture: see tests/ui/component_unknown_state_machine.rs
+version: "1.0"
+namespace: "t"
+components:
+  - name: Ctrl
+    kind: passive
+    state_machine: Missing

@@ -74,9 +74,26 @@ impl MessageType {
     ///
     /// # Returns
     ///
-    /// The u8 value corresponding to this MessageType.
+    /// The u8 value corresponding to this MessageType. This equals the
+    /// `#[repr(u8)]` discriminant and is the inverse of
+    /// [`from_u8`](Self::from_u8).
     pub fn to_u8(self) -> u8 {
-        self as u8
+        match self {
+            MessageType::ControlTelemetry => 0,
+            MessageType::PidTelemetry => 1,
+            MessageType::StateMachineTelemetry => 2,
+            MessageType::Heartbeat => 3,
+            MessageType::Command => 4,
+            MessageType::Ack => 5,
+        }
+    }
+}
+
+impl From<MessageType> for u8 {
+    /// Converts a [`MessageType`] to its wire value; same as
+    /// [`MessageType::to_u8`].
+    fn from(value: MessageType) -> Self {
+        value.to_u8()
     }
 }
 

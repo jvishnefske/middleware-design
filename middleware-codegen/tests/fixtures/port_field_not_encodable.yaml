@@ -1,0 +1,12 @@
+# trybuild compile-fail fixture: see tests/ui/port_field_not_encodable.rs
+version: "1.0"
+namespace: "t"
+messages:
+  - name: Msg
+    fields:
+      - name: c
+        type: char
+ports:
+  - name: inp
+    direction: input
+    message_type: Msg

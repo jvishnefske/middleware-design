@@ -1,0 +1,7 @@
+# trybuild compile-fail fixture: see tests/ui/component_state_not_enum.rs
+version: "1.0"
+namespace: "t"
+components:
+  - name: Ctrl
+    kind: passive
+    state: Missing

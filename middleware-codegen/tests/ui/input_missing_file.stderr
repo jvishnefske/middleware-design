@@ -1,0 +1,7 @@
+error: Failed to read YAML file '../fixtures/does_not_exist.yaml' (resolved to '$DIR/tests/ui/../fixtures/does_not_exist.yaml'): No such file or directory (os error 2)
+ --> tests/ui/input_missing_file.rs:1:1
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/does_not_exist.yaml");
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `middleware_codegen::middleware_model` (in Nightly builds, run with -Z macro-backtrace for more info)

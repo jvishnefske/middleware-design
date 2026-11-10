@@ -1,0 +1,26 @@
+# trybuild compile-fail fixture: see tests/ui/schema_unknown_key.rs
+# The schema sets additionalProperties: false, so the misspelled
+# `gaurd` key is rejected at /state_machines/0/transitions/0.
+version: "1.0"
+namespace: "t"
+types:
+  enums:
+    - name: S
+      repr: u8
+      variants: [A, B]
+    - name: E
+      repr: u8
+      variants: [Go]
+state_machines:
+  - name: M
+    state_type: S
+    initial_state: A
+    events: E
+    states:
+      - name: A
+      - name: B
+    transitions:
+      - from: A
+        event: Go
+        to: B
+        gaurd: ready

@@ -170,6 +170,8 @@ impl StateMachineTelemetry {
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::float_cmp))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,7 +192,7 @@ mod tests {
         assert_eq!(telem.p_term, 1.0);
         assert_eq!(telem.i_term, 0.5);
         assert_eq!(telem.d_term, 0.2);
-        assert_eq!(telem.saturated, false);
+        assert!(!telem.saturated);
     }
 
     #[test]

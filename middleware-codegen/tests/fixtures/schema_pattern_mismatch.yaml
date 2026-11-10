@@ -1,0 +1,3 @@
+# trybuild compile-fail fixture: see tests/ui/schema_pattern_mismatch.rs
+version: "1.0"
+namespace: "Bad-Name"

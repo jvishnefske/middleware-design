@@ -171,6 +171,8 @@ pub trait PortMessage: Sized {
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,26 +185,23 @@ mod tests {
 
     impl PortMessage for TestMessage {
         fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializationError> {
-            if buffer.len() < 5 {
-                return Err(SerializationError::BufferTooSmall);
-            }
-
-            buffer[0..4].copy_from_slice(&self.value.to_le_bytes());
-            buffer[4] = if self.flag { 1 } else { 0 };
+            let out = buffer
+                .get_mut(..5)
+                .ok_or(SerializationError::BufferTooSmall)?;
+            let (value_out, flag_out) = out.split_at_mut(4);
+            value_out.copy_from_slice(&self.value.to_le_bytes());
+            flag_out.fill(u8::from(self.flag));
             Ok(5)
         }
 
         fn deserialize(buffer: &[u8]) -> Result<Self, SerializationError> {
-            if buffer.len() < 5 {
-                return Err(SerializationError::InvalidFormat);
+            match buffer {
+                [a, b, c, d, flag, ..] => Ok(Self {
+                    value: u32::from_le_bytes([*a, *b, *c, *d]),
+                    flag: *flag != 0,
+                }),
+                _ => Err(SerializationError::InvalidFormat),
             }
-
-            let mut value_bytes = [0u8; 4];
-            value_bytes.copy_from_slice(&buffer[0..4]);
-            let value = u32::from_le_bytes(value_bytes);
-            let flag = buffer[4] != 0;
-
-            Ok(Self { value, flag })
         }
 
         fn max_size() -> usize {
@@ -244,7 +243,7 @@ mod tests {
         let msg = TestMessage::deserialize(&buffer).expect("Deserialization should succeed");
 
         assert_eq!(msg.value, 42);
-        assert_eq!(msg.flag, true);
+        assert!(msg.flag);
     }
 
     #[test]

@@ -1,0 +1,7 @@
+error: Code generation failed: Component 'Ctrl' state 'E' differs from state machine 'M' state type 'S'
+ --> tests/ui/component_state_mismatch.rs:1:1
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/component_state_mismatch.yaml");
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `middleware_codegen::middleware_model` (in Nightly builds, run with -Z macro-backtrace for more info)

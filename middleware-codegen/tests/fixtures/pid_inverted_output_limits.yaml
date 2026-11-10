@@ -1,0 +1,9 @@
+# trybuild compile-fail fixture: see tests/ui/pid_inverted_output_limits.rs
+version: "1.0"
+namespace: "t"
+math_blocks:
+  - name: p
+    kind: pid
+    config:
+      output_min: 1.0
+      output_max: -1.0

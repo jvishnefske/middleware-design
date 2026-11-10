@@ -10,13 +10,18 @@
 //! - REQ-FSM-011: Generated guard conditions
 //! - REQ-FSM-012: Generated transition actions
 
+// float_cmp: only generated constants are compared with the YAML literals they
+// were emitted from, which are exact by construction.
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::float_cmp))]
+
 use core::cell::{Cell, RefCell};
 
 use middleware::port::{InputPort, OutputPort};
 use middleware::{Component, PortDirection, PortMessage, SendError};
 
-// Cargo runs rustc from the workspace root, so the path is relative to it.
-middleware_codegen::middleware_model!("examples/attitude_controller.yaml");
+// The path is relative to this file, like `include_str!`.
+middleware_codegen::middleware_model!("../../examples/attitude_controller.yaml");
 
 use attitude_control::{
     AttitudeController, AttitudeControllerCommand, AttitudeControllerConfig,

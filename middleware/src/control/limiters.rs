@@ -179,9 +179,12 @@ impl ControlBlock for Saturator {
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::assert_close;
 
     #[test]
     fn test_rate_limiter_new() {
@@ -197,11 +200,11 @@ mod tests {
 
         // Try to increase by 100.0, but limited to 10.0 * 0.1 = 1.0
         let (limiter, output) = limiter.update(100.0, 0.1).unwrap();
-        assert_eq!(output, 1.0);
+        assert_close(output, 1.0);
 
         // Try to increase by another 100.0, but limited to 1.0 + 1.0 = 2.0
         let (_, output) = limiter.update(100.0, 0.1).unwrap();
-        assert_eq!(output, 2.0);
+        assert_close(output, 2.0);
     }
 
     #[test]
@@ -210,11 +213,11 @@ mod tests {
 
         // Try to decrease to 0.0, but limited to -5.0 * 0.1 = -0.5
         let (limiter, output) = limiter.update(0.0, 0.1).unwrap();
-        assert_eq!(output, 9.5);
+        assert_close(output, 9.5);
 
         // Try again
         let (_, output) = limiter.update(0.0, 0.1).unwrap();
-        assert_eq!(output, 9.0);
+        assert_close(output, 9.0);
     }
 
     #[test]
@@ -223,10 +226,10 @@ mod tests {
 
         // Small change that's within rate limits
         let (limiter, output) = limiter.update(5.5, 0.1).unwrap();
-        assert_eq!(output, 5.5);
+        assert_close(output, 5.5);
 
         let (_, output) = limiter.update(5.0, 0.1).unwrap();
-        assert_eq!(output, 5.0);
+        assert_close(output, 5.0);
     }
 
     #[test]
@@ -234,10 +237,10 @@ mod tests {
         let limiter = RateLimiter::new(10.0, -10.0, 0.0);
 
         let (limiter, output) = limiter.update(100.0, 0.1).unwrap();
-        assert_eq!(output, 1.0);
+        assert_close(output, 1.0);
 
         let (_, output) = limiter.update(-100.0, 0.1).unwrap();
-        assert_eq!(output, 0.0); // 1.0 + (-10.0 * 0.1)
+        assert_close(output, 0.0); // 1.0 + (-10.0 * 0.1)
     }
 
     #[test]
@@ -245,7 +248,7 @@ mod tests {
         let limiter = RateLimiter::new(10.0, -5.0, 5.0);
         let (limiter, _) = limiter.update(100.0, 0.1).unwrap();
 
-        assert_ne!(limiter.prev_output(), 0.0);
+        assert_close(limiter.prev_output(), 6.0); // 5.0 + 10.0 * 0.1
 
         let limiter = limiter.reset();
         assert_eq!(limiter.prev_output(), 0.0);

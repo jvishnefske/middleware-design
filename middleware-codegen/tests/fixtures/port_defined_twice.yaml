@@ -1,0 +1,15 @@
+# trybuild compile-fail fixture: see tests/ui/port_defined_twice.rs
+version: "1.0"
+namespace: "t"
+messages:
+  - name: Msg
+    fields:
+      - name: value
+        type: u32
+ports:
+  - name: inp
+    direction: input
+    message_type: Msg
+  - name: inp
+    direction: output
+    message_type: Msg

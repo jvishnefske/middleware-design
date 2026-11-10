@@ -1,0 +1,7 @@
+error: Code generation failed: Math block 'p': integral_min 0.5 exceeds integral_max 0.1
+ --> tests/ui/pid_inverted_integral_limits.rs:1:1
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/pid_inverted_integral_limits.yaml");
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `middleware_codegen::middleware_model` (in Nightly builds, run with -Z macro-backtrace for more info)

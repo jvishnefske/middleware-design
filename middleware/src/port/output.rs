@@ -174,19 +174,18 @@ mod tests {
 
     impl PortMessage for TestMessage {
         fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializationError> {
-            if buffer.len() < 4 {
-                return Err(SerializationError::BufferTooSmall);
-            }
-            buffer[0..4].copy_from_slice(&self.value.to_le_bytes());
+            buffer
+                .get_mut(..4)
+                .ok_or(SerializationError::BufferTooSmall)?
+                .copy_from_slice(&self.value.to_le_bytes());
             Ok(4)
         }
 
         fn deserialize(buffer: &[u8]) -> Result<Self, SerializationError> {
-            if buffer.len() < 4 {
-                return Err(SerializationError::InvalidFormat);
-            }
-            let mut bytes = [0u8; 4];
-            bytes.copy_from_slice(&buffer[0..4]);
+            let bytes: [u8; 4] = buffer
+                .get(..4)
+                .and_then(|b| b.try_into().ok())
+                .ok_or(SerializationError::InvalidFormat)?;
             Ok(Self {
                 value: u32::from_le_bytes(bytes),
             })

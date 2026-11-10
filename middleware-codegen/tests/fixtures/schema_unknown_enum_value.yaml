@@ -1,0 +1,6 @@
+# trybuild compile-fail fixture: see tests/ui/schema_unknown_enum_value.rs
+version: "1.0"
+namespace: "t"
+components:
+  - name: Ctrl
+    kind: reactive

@@ -1,0 +1,9 @@
+# trybuild compile-fail fixture: see tests/ui/pid_inverted_integral_limits.rs
+version: "1.0"
+namespace: "t"
+math_blocks:
+  - name: p
+    kind: pid
+    config:
+      integral_min: 0.5
+      integral_max: 0.1

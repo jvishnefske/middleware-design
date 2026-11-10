@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Host-only build automation: traceability and coverage gates"
+
+[dependencies]
+
+[lints]
+workspace = true

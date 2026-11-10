@@ -1,0 +1,25 @@
+# trybuild compile-fail fixture: see tests/ui/fsm_guard_action_clash.rs
+version: "1.0"
+namespace: "t"
+types:
+  enums:
+    - name: S
+      repr: u8
+      variants: [A, B]
+    - name: E
+      repr: u8
+      variants: [Go, Back]
+state_machines:
+  - name: M
+    state_type: S
+    initial_state: A
+    events: E
+    states:
+      - name: A
+        on_exit: same
+      - name: B
+    transitions:
+      - from: A
+        event: Go
+        to: B
+        guard: same

@@ -1,0 +1,16 @@
+# trybuild compile-fail fixture: see tests/ui/component_wrong_port_direction.rs
+version: "1.0"
+namespace: "t"
+messages:
+  - name: Msg
+    fields:
+      - name: value
+        type: u32
+ports:
+  - name: inp
+    direction: input
+    message_type: Msg
+components:
+  - name: Ctrl
+    kind: passive
+    output_ports: [inp]

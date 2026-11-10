@@ -1,0 +1,6 @@
+error: model violates schema (1 error):
+         - at `/types/enums/0/repr`: "usize" is not one of ["u8","u16","u32","u64","i8","i16","i32","i64"]
+ --> tests/ui/schema_bad_enum_repr.rs:1:39
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/schema_bad_enum_repr.yaml");
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

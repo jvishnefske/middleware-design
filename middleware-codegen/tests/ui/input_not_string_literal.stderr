@@ -1,0 +1,5 @@
+error: expected string literal
+ --> tests/ui/input_not_string_literal.rs:1:39
+  |
+1 | middleware_codegen::middleware_model!(42);
+  |                                       ^^

@@ -1,0 +1,87 @@
+# Back-to-back fixture for middleware/tests/codegen_back_to_back.rs.
+#
+# A small door controller that covers what the attitude example does not:
+# a guard shared by two rows, a guarded self-loop with an action, an
+# unguarded self-loop on a state with both on_enter and on_exit, an action
+# name used both as a transition action and as an on_enter hook, a state
+# with no outgoing rows for some events, and an enum variant (Maintenance)
+# that is not listed under states. Each (from, event) pair here has at most
+# one row; rows sharing a pair are covered by b2b_duplicate_rows.yaml.
+
+version: "1.0"
+namespace: "b2b_door"
+
+types:
+  enums:
+    - name: DoorState
+      repr: u8
+      variants: [Closed, Opening, Open, Closing, Locked, Jammed, Maintenance]
+    - name: DoorEvent
+      repr: u8
+      variants: [OpenCmd, CloseCmd, Reached, Lock, Unlock, Obstruct, Tick]
+
+state_machines:
+  - name: DoorMachine
+    state_type: DoorState
+    initial_state: Closed
+    events: DoorEvent
+    states:
+      - name: Closed
+        on_enter: stop_motor
+      - name: Opening
+        on_enter: start_motor
+        on_exit: stop_motor
+      - name: Open
+        on_enter: log_state
+      - name: Closing
+        on_enter: start_motor
+        on_exit: stop_motor
+      - name: Locked
+        on_enter: engage_lock
+        on_exit: release_lock
+      - name: Jammed
+        on_enter: raise_alarm
+    transitions:
+      - from: Closed
+        event: OpenCmd
+        to: Opening
+        guard: power_ok
+        action: log_state
+      - from: Opening
+        event: Reached
+        to: Open
+      - from: Open
+        event: CloseCmd
+        to: Closing
+        guard: path_clear
+      - from: Closing
+        event: Reached
+        to: Closed
+      - from: Closing
+        event: Obstruct
+        to: Opening
+        action: raise_alarm
+      - from: Closed
+        event: Lock
+        to: Locked
+        guard: power_ok
+      - from: Locked
+        event: Unlock
+        to: Closed
+        guard: authorised
+        action: log_state
+      - from: Open
+        event: Tick
+        to: Open
+        guard: path_clear
+        action: log_state
+      - from: Opening
+        event: Obstruct
+        to: Jammed
+      - from: Jammed
+        event: Unlock
+        to: Closed
+        guard: authorised
+      - from: Locked
+        event: Tick
+        to: Locked

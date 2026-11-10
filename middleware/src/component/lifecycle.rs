@@ -50,6 +50,22 @@ pub enum LifecycleState {
     Terminated = 6,
 }
 
+impl From<LifecycleState> for u8 {
+    /// Returns the state's wire value, equal to its `#[repr(u8)]`
+    /// discriminant.
+    fn from(state: LifecycleState) -> Self {
+        match state {
+            LifecycleState::Uninitialized => 0,
+            LifecycleState::Initializing => 1,
+            LifecycleState::Ready => 2,
+            LifecycleState::Running => 3,
+            LifecycleState::Paused => 4,
+            LifecycleState::ShuttingDown => 5,
+            LifecycleState::Terminated => 6,
+        }
+    }
+}
+
 impl LifecycleState {
     /// Check if transition to target state is valid.
     ///
@@ -215,6 +231,8 @@ pub trait Lifecycle {
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,8 +281,13 @@ mod tests {
 
     #[test]
     fn lifecycle_state_values() {
-        assert_eq!(LifecycleState::Uninitialized as u8, 0);
-        assert_eq!(LifecycleState::Terminated as u8, 6);
+        assert_eq!(u8::from(LifecycleState::Uninitialized), 0);
+        assert_eq!(u8::from(LifecycleState::Initializing), 1);
+        assert_eq!(u8::from(LifecycleState::Ready), 2);
+        assert_eq!(u8::from(LifecycleState::Running), 3);
+        assert_eq!(u8::from(LifecycleState::Paused), 4);
+        assert_eq!(u8::from(LifecycleState::ShuttingDown), 5);
+        assert_eq!(u8::from(LifecycleState::Terminated), 6);
     }
 
     #[test]

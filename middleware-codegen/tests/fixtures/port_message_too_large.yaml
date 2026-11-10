@@ -1,0 +1,76 @@
+# trybuild compile-fail fixture: see tests/ui/port_message_too_large.rs
+version: "1.0"
+namespace: "t"
+messages:
+  - name: Big
+    fields:
+      - name: f0
+        type: f64
+      - name: f1
+        type: f64
+      - name: f2
+        type: f64
+      - name: f3
+        type: f64
+      - name: f4
+        type: f64
+      - name: f5
+        type: f64
+      - name: f6
+        type: f64
+      - name: f7
+        type: f64
+      - name: f8
+        type: f64
+      - name: f9
+        type: f64
+      - name: f10
+        type: f64
+      - name: f11
+        type: f64
+      - name: f12
+        type: f64
+      - name: f13
+        type: f64
+      - name: f14
+        type: f64
+      - name: f15
+        type: f64
+      - name: f16
+        type: f64
+      - name: f17
+        type: f64
+      - name: f18
+        type: f64
+      - name: f19
+        type: f64
+      - name: f20
+        type: f64
+      - name: f21
+        type: f64
+      - name: f22
+        type: f64
+      - name: f23
+        type: f64
+      - name: f24
+        type: f64
+      - name: f25
+        type: f64
+      - name: f26
+        type: f64
+      - name: f27
+        type: f64
+      - name: f28
+        type: f64
+      - name: f29
+        type: f64
+      - name: f30
+        type: f64
+      - name: f31
+        type: f64
+      - name: f32
+        type: f64
+ports:
+  - name: inp
+    direction: input
+    message_type: Big

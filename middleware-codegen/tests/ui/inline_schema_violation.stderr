@@ -1,0 +1,12 @@
+error: model violates schema (1 error):
+         - at `/components/0/kind`: "reactive" is not one of ["passive","active"]
+ --> tests/ui/inline_schema_violation.rs:2:5
+  |
+2 | /     r#"
+3 | | version: "1.0"
+4 | | namespace: "t"
+5 | | components:
+6 | |   - name: Ctrl
+7 | |     kind: reactive
+8 | | "#
+  | |__^

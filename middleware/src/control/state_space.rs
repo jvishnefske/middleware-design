@@ -139,10 +139,8 @@ impl<const N: usize, const M: usize, const P: usize> DiscreteStateSpace<N, M, P>
         let new_state = self.a * self.state + self.b * input;
 
         // Check for numerical errors
-        for i in 0..N {
-            if !new_state[i].is_finite() {
-                return Err(ControlError::NumericalError);
-            }
+        if new_state.iter().any(|v| !v.is_finite()) {
+            return Err(ControlError::NumericalError);
         }
 
         Ok(Self {
@@ -167,10 +165,8 @@ impl<const N: usize, const M: usize, const P: usize> DiscreteStateSpace<N, M, P>
         let output = self.c * self.state + self.d * input;
 
         // Check for numerical errors
-        for i in 0..P {
-            if !output[i].is_finite() {
-                return Err(ControlError::NumericalError);
-            }
+        if output.iter().any(|v| !v.is_finite()) {
+            return Err(ControlError::NumericalError);
         }
 
         Ok(output)
@@ -183,10 +179,8 @@ impl<const N: usize, const M: usize, const P: usize> ControlBlock for DiscreteSt
 
     fn update(self, input: Self::Input, dt: f32) -> Result<(Self, Self::Output), ControlError> {
         // Validate input
-        for i in 0..M {
-            if !input[i].is_finite() {
-                return Err(ControlError::InvalidInput);
-            }
+        if input.iter().any(|v| !v.is_finite()) {
+            return Err(ControlError::InvalidInput);
         }
 
         if dt <= 0.0 || !dt.is_finite() {
@@ -213,9 +207,12 @@ impl<const N: usize, const M: usize, const P: usize> ControlBlock for DiscreteSt
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::assert_close;
 
     #[test]
     fn test_state_space_new() {
@@ -251,19 +248,19 @@ mod tests {
         let (ss, output) = ss.update(input, dt).unwrap();
 
         // Output should be 0.0 (initial state)
-        assert_eq!(output[0], 0.0);
+        assert_close(output.x, 0.0);
 
         // State should be 1.0 (0.0 + 10.0 * 0.1)
-        assert_eq!(ss.state()[0], 1.0);
+        assert_close(ss.state().x, 1.0);
 
         // Next update
         let (ss, output) = ss.update(input, dt).unwrap();
 
         // Output should be 1.0 (previous state)
-        assert_eq!(output[0], 1.0);
+        assert_close(output.x, 1.0);
 
         // State should be 2.0 (1.0 + 10.0 * 0.1)
-        assert_eq!(ss.state()[0], 2.0);
+        assert_close(ss.state().x, 2.0);
     }
 
     #[test]
@@ -281,7 +278,7 @@ mod tests {
         let (_, output) = ss.update(input, 0.01).unwrap();
 
         // Output should be state + input = 5.0 + 3.0 = 8.0
-        assert_eq!(output[0], 8.0);
+        assert_close(output.x, 8.0);
     }
 
     #[test]
@@ -302,12 +299,14 @@ mod tests {
         let input = SVector::<f32, 1>::from([10.0]);
         let (ss, output) = ss.update(input, 0.01).unwrap();
 
-        assert_eq!(output[0], 0.0); // Initial output
+        assert_close(output.x, 0.0); // Initial output
 
         // State should be updated
         let state = ss.state();
-        assert!(state[0].is_finite());
-        assert!(state[1].is_finite());
+        assert!(state.iter().all(|v| v.is_finite()));
+        // x1 = 0.1 * 10.0 = 1.0 after one step; x0 has not moved yet.
+        assert_close(state.x, 0.0);
+        assert_close(state.y, 1.0);
     }
 
     #[test]
@@ -323,12 +322,12 @@ mod tests {
         let input = SVector::<f32, 1>::from([10.0]);
         let (ss, _) = ss.update(input, 0.01).unwrap();
 
-        // State should be non-zero
-        assert_ne!(ss.state()[0], 0.0);
+        // State should be non-zero: 5.0 + 10.0
+        assert_close(ss.state().x, 15.0);
 
         // Reset
         let ss = ss.reset();
-        assert_eq!(ss.state()[0], 0.0);
+        assert_eq!(ss.state(), SVector::<f32, 1>::zeros());
     }
 
     #[test]

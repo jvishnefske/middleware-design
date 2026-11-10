@@ -1,0 +1,3 @@
+# trybuild compile-fail fixture: see tests/ui/input_malformed_yaml.rs
+version: "1.0"
+namespace: [unclosed

@@ -54,7 +54,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
 use super::naming::{pascal_ident, snake_ident};
-use super::traces_doc;
+use super::{first_duplicate, traces_doc};
 use crate::model::{Component, Field, Model, PortDef};
 
 /// Maximum serialized size the runtime accepts for one message.
@@ -242,12 +242,7 @@ pub fn generate_port_messages(model: &Model) -> Result<TokenStream, String> {
         snake_ident(&p.name, "port")?;
         Direction::parse(p).map(|_| ())
     })?;
-    if let Some((_, dup)) = model
-        .ports
-        .iter()
-        .enumerate()
-        .find(|(i, p)| model.ports[..*i].iter().any(|q| q.name == p.name))
-    {
+    if let Some(dup) = first_duplicate(&model.ports, |a, b| a.name == b.name) {
         return Err(format!("Port '{}' is defined twice", dup.name));
     }
     let types: Vec<&str> = model
@@ -372,11 +367,7 @@ fn generate_component(model: &Model, comp: &Component, index: usize) -> Result<T
     let inputs = resolve_ports(model, comp, &comp.input_ports, Direction::Input)?;
     let outputs = resolve_ports(model, comp, &comp.output_ports, Direction::Output)?;
     let ports: Vec<ResolvedPort> = inputs.into_iter().chain(outputs).collect();
-    if let Some((_, dup)) = ports
-        .iter()
-        .enumerate()
-        .find(|(i, p)| ports[..*i].iter().any(|q| q.def.name == p.def.name))
-    {
+    if let Some(dup) = first_duplicate(&ports, |a, b| a.def.name == b.def.name) {
         return Err(format!("Component '{}' lists port '{}' twice", comp.name, dup.def.name));
     }
     let binding = bind_state(model, comp)?;
@@ -385,12 +376,9 @@ fn generate_component(model: &Model, comp: &Component, index: usize) -> Result<T
         .iter()
         .map(|c| pascal_ident(c, "command"))
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some((i, _)) = commands
-        .iter()
-        .enumerate()
-        .find(|(i, c)| commands[..*i].contains(c))
-    {
-        return Err(format!("Component '{}' command '{}' is duplicated", comp.name, comp.commands[i]));
+    let named_commands: Vec<(&String, &Ident)> = comp.commands.iter().zip(&commands).collect();
+    if let Some((dup, _)) = first_duplicate(&named_commands, |a, b| a.1 == b.1) {
+        return Err(format!("Component '{}' command '{}' is duplicated", comp.name, dup));
     }
 
     let name = format_ident!("{}", comp.name);
@@ -617,6 +605,8 @@ pub fn generate_components(model: &Model) -> Result<TokenStream, String> {
 }
 
 #[cfg(test)]
+// test code: a panic is a test failure, the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::indexing_slicing))]
 mod tests {
     use super::*;
     use crate::parser::parse_model;

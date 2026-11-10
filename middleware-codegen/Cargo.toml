@@ -18,3 +18,8 @@ serde_json = "1.0"
 jsonschema = { version = "0.30", default-features = false }
 
 [dev-dependencies]
+trybuild = "1.0"
+middleware = { path = "../middleware" }
+
+[lints]
+workspace = true

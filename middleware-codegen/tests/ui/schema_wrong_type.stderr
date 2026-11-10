@@ -1,0 +1,6 @@
+error: model violates schema (1 error):
+         - at `/version`: 1 is not of type "string"
+ --> tests/ui/schema_wrong_type.rs:1:39
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/schema_wrong_type.yaml");
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

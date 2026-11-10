@@ -40,13 +40,13 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
     if model.namespace.is_empty() {
         return Err("Namespace cannot be empty".to_string());
     }
-    if !model.namespace.chars().next().unwrap().is_ascii_lowercase() {
+    if !first_char_is(&model.namespace, |c| c.is_ascii_lowercase()) {
         return Err("Namespace must start with lowercase letter".to_string());
     }
 
     // Validate enum names are PascalCase
     for enum_def in &model.types.enums {
-        if !enum_def.name.chars().next().unwrap().is_ascii_uppercase() {
+        if !first_char_is(&enum_def.name, |c| c.is_ascii_uppercase()) {
             return Err(format!("Enum '{}' must be PascalCase", enum_def.name));
         }
         if enum_def.variants.is_empty() {
@@ -61,7 +61,7 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
 
     // Validate struct names
     for struct_def in &model.types.structs {
-        if !struct_def.name.chars().next().unwrap().is_ascii_uppercase() {
+        if !first_char_is(&struct_def.name, |c| c.is_ascii_uppercase()) {
             return Err(format!("Struct '{}' must be PascalCase", struct_def.name));
         }
         if struct_def.fields.is_empty() {
@@ -71,14 +71,14 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
 
     // Validate message names
     for msg in &model.messages {
-        if !msg.name.chars().next().unwrap().is_ascii_uppercase() {
+        if !first_char_is(&msg.name, |c| c.is_ascii_uppercase()) {
             return Err(format!("Message '{}' must be PascalCase", msg.name));
         }
     }
 
     // Validate component names
     for comp in &model.components {
-        if !comp.name.chars().next().unwrap().is_ascii_uppercase() {
+        if !first_char_is(&comp.name, |c| c.is_ascii_uppercase()) {
             return Err(format!("Component '{}' must be PascalCase", comp.name));
         }
         if comp.kind != "passive" && comp.kind != "active" {
@@ -96,7 +96,7 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
 
     // Validate state machines
     for fsm in &model.state_machines {
-        if !fsm.name.chars().next().unwrap().is_ascii_uppercase() {
+        if !first_char_is(&fsm.name, |c| c.is_ascii_uppercase()) {
             return Err(format!("State machine '{}' must be PascalCase", fsm.name));
         }
         if fsm.states.is_empty() {
@@ -121,7 +121,15 @@ pub fn validate_model(model: &Model) -> Result<(), String> {
     Ok(())
 }
 
+/// Returns `true` if `name` is non-empty and its first character satisfies
+/// `pred`. An empty name never satisfies a naming rule.
+fn first_char_is(name: &str, pred: impl Fn(char) -> bool) -> bool {
+    name.chars().next().is_some_and(pred)
+}
+
 #[cfg(test)]
+// test code: a panic is a test failure, the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::indexing_slicing))]
 mod tests {
     use super::*;
 
@@ -153,6 +161,32 @@ types:
         assert_eq!(model.types.enums.len(), 1);
         assert_eq!(model.types.enums[0].name, "MyState");
         assert_eq!(model.types.enums[0].variants.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_rejects_value_of_wrong_model_type() {
+        // The schema rejects this first; the parser error is defence in depth.
+        let yaml = "version: \"1.0\"\nnamespace: t\nmath_blocks:\n  - name: p\n    kind: pid\n    config:\n      kp: high\n";
+        let err = parse_model(yaml).unwrap_err();
+        assert!(err.starts_with("YAML parse error"), "{}", err);
+    }
+
+    #[test]
+    fn test_validate_empty_name_is_not_pascal_case() {
+        let yaml = r#"
+version: "1.0"
+namespace: "test"
+messages:
+  - name: ""
+    fields:
+      - name: v
+        type: u8
+"#;
+        let model = parse_model(yaml).unwrap();
+        assert_eq!(
+            validate_model(&model),
+            Err("Message '' must be PascalCase".to_string())
+        );
     }
 
     #[test]

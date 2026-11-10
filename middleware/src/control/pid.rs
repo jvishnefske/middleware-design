@@ -326,9 +326,12 @@ impl Default for PidControllerBuilder {
     }
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::assert_close;
 
     #[test]
     fn test_pid_gains_new() {
@@ -377,7 +380,7 @@ mod tests {
 
         let (_, output) = pid.update((setpoint, measurement), dt).unwrap();
         // Error = 5.0, P-term = 2.0 * 5.0 = 10.0
-        assert_eq!(output, 10.0);
+        assert_close(output, 10.0);
     }
 
     #[test]
@@ -392,11 +395,11 @@ mod tests {
 
         // First update: integral = 10.0 * 0.1 = 1.0, output = 1.0
         let (pid, output) = pid.update((setpoint, measurement), dt).unwrap();
-        assert_eq!(output, 1.0);
+        assert_close(output, 1.0);
 
         // Second update: integral = 1.0 + 10.0 * 0.1 = 2.0, output = 2.0
         let (_, output) = pid.update((setpoint, measurement), dt).unwrap();
-        assert_eq!(output, 2.0);
+        assert_close(output, 2.0);
     }
 
     #[test]
@@ -411,7 +414,7 @@ mod tests {
 
         // Error = 100.0, integral would be 100.0 but clamped to 5.0
         let (pid, output) = pid.update((setpoint, measurement), dt).unwrap();
-        assert_eq!(output, 5.0);
+        assert_close(output, 5.0);
         assert_eq!(pid.state().integral, 5.0);
     }
 
@@ -441,14 +444,14 @@ mod tests {
 
         // First update: no previous measurement, so D-term = 0.0
         let (pid, output) = pid.update((setpoint, 90.0), dt).unwrap();
-        assert_eq!(output, 0.0);
+        assert_close(output, 0.0);
         assert_eq!(pid.state().prev_measurement, Some(90.0));
 
         // Second update: measurement changes from 90.0 to 95.0
         // derivative = (95.0 - 90.0) / 0.1 = 50.0
         // D-term = -1.0 * 50.0 = -50.0 (negative because we want to oppose the change)
         let (_, output) = pid.update((setpoint, 95.0), dt).unwrap();
-        assert_eq!(output, -50.0);
+        assert_close(output, -50.0);
     }
 
     /// REQ-CTL-013: the first update has no previous sample, so it must not

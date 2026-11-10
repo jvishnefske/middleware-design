@@ -1,0 +1,5 @@
+# trybuild compile-fail fixture: see tests/ui/input_not_json_compatible.rs
+version: "1.0"
+namespace: "t"
+? [a, b]
+: c

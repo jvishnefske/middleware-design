@@ -131,6 +131,8 @@ pub trait Component: Sized {
     fn state(&self) -> &Self::State;
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
     use super::*;

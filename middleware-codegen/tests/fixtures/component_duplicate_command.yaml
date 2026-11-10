@@ -1,0 +1,7 @@
+# trybuild compile-fail fixture: see tests/ui/component_duplicate_command.rs
+version: "1.0"
+namespace: "t"
+components:
+  - name: Ctrl
+    kind: passive
+    commands: [arm, Arm]

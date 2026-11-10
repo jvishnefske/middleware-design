@@ -101,12 +101,12 @@ impl Response {
     ///
     /// Returns error if payload exceeds 32 bytes.
     pub fn with_payload(invocation: Invocation, payload: &[u8]) -> Result<Self, InvokeError> {
-        if payload.len() > 32 {
-            return Err(InvokeError::ProcessingFailed);
-        }
-
         let mut response = Self::success(invocation);
-        response.payload[..payload.len()].copy_from_slice(payload);
+        response
+            .payload
+            .get_mut(..payload.len())
+            .ok_or(InvokeError::ProcessingFailed)?
+            .copy_from_slice(payload);
         response.payload_len = payload.len();
         Ok(response)
     }
@@ -187,6 +187,8 @@ pub trait PassiveComponent {
     fn invoke(&self, invocation: Invocation) -> Result<Response, InvokeError>;
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 #[cfg(test)]
 mod tests {
     use super::*;

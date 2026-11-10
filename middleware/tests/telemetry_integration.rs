@@ -3,6 +3,11 @@
 //! These tests verify end-to-end serialization and deserialization of
 //! telemetry messages using CBOR encoding.
 
+// float_cmp: decoded values are compared with the values that were encoded;
+// a CBOR round trip is bit-exact by construction, so `==` is the intended check.
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#![cfg_attr(test, allow(clippy::expect_used, clippy::indexing_slicing, clippy::float_cmp))]
+
 use middleware::telemetry::{
     ControlTelemetry, FrameHeader, MessageType, PidTelemetry, StateMachineTelemetry,
     TelemetryBuffer,
@@ -21,7 +26,7 @@ fn test_control_telemetry_encode_decode() {
     // Verify buffer has data
     assert!(!buffer.is_empty());
     let bytes = buffer.as_bytes();
-    assert!(bytes.len() > 0);
+    assert!(!bytes.is_empty());
 
     // Decode from bytes
     let decoded: ControlTelemetry = decode(bytes).expect("Failed to decode");
@@ -130,7 +135,7 @@ fn test_buffer_reuse() {
 
     // Verify second message was encoded correctly
     let decoded: PidTelemetry = decode(buffer.as_bytes()).expect("Failed to decode");
-    assert_eq!(decoded.saturated, true);
+    assert!(decoded.saturated);
 }
 
 #[test]
@@ -179,7 +184,7 @@ fn test_telemetry_with_frame_header() {
 
     // Update header with actual payload length
     let header_with_len =
-        FrameHeader::new(MessageType::ControlTelemetry, 1, payload_buffer.len() as u16);
+        FrameHeader::new(MessageType::ControlTelemetry, 1, u16::try_from(payload_buffer.len()).expect("payload length fits u16"));
     header_buffer
         .encode(&header_with_len)
         .expect("Failed to encode updated header");
@@ -189,7 +194,7 @@ fn test_telemetry_with_frame_header() {
         decode(header_buffer.as_bytes()).expect("Failed to decode header");
     assert_eq!(decoded_header.msg_type, MessageType::ControlTelemetry);
     assert_eq!(decoded_header.sequence, 1);
-    assert_eq!(decoded_header.payload_len, payload_buffer.len() as u16);
+    assert_eq!(decoded_header.payload_len, u16::try_from(payload_buffer.len()).expect("payload length fits u16"));
 
     // Decode payload
     let decoded_payload: ControlTelemetry =
@@ -221,7 +226,7 @@ fn test_multiple_message_types_encoding() {
         buffer.encode(msg).expect("Failed to encode");
 
         // Create header
-        let header = FrameHeader::new(*msg_type, 0, buffer.len() as u16);
+        let header = FrameHeader::new(*msg_type, 0, u16::try_from(buffer.len()).expect("payload length fits u16"));
         assert_eq!(header.msg_type, *msg_type);
         assert_eq!(usize::from(header.payload_len), buffer.len());
 

@@ -36,6 +36,7 @@ Requirements are tracked with REQ-xxx identifiers for DO-178C DAL-C traceability
 - [x] **REQ-CMP-020**: Active components shall have an associated Schedule type
 - [x] **REQ-CMP-021**: Active components shall implement run_cycle() returning Result<CycleResult, CycleError>
 - [x] **REQ-CMP-022**: Schedule shall specify rate (Duration) and priority
+- [ ] **REQ-CMP-023**: Schedule construction from a frequency shall reject NaN, infinite, zero and negative frequencies with an error
 
 ### 2.4 Lifecycle
 - [x] **REQ-CMP-030**: Components shall support lifecycle states: Uninitialized, Initializing, Ready, Running, Paused, ShuttingDown, Terminated
@@ -74,6 +75,8 @@ Requirements are tracked with REQ-xxx identifiers for DO-178C DAL-C traceability
 - [x] **REQ-FSM-021**: StateMachine.process(event) shall return Result<TransitionResult, FsmError>
 - [x] **REQ-FSM-022**: TransitionResult shall indicate Transitioned, Remained, or Ignored
 - [x] **REQ-FSM-023**: State machine processing shall be immutable (return new instance)
+- [ ] **REQ-FSM-024**: Row selection: the first row matching (state, event) whose guard is absent or true shall fire; if rows match but every guard is false the result shall be Remained; if no row matches it shall be Ignored. Generated and runtime machines shall agree
+- [ ] **REQ-FSM-025**: A failing exit, transition or entry action shall be reported as a distinct error and the caller shall retain its previous state
 
 ### 4.4 Guards
 - [x] **REQ-FSM-030**: System shall provide ThresholdGuard for control-based transitions
@@ -85,6 +88,7 @@ Requirements are tracked with REQ-xxx identifiers for DO-178C DAL-C traceability
 - [x] **REQ-CTL-001**: Control blocks shall implement update(self, input, dt) -> Result<(Self, Output), Error>
 - [x] **REQ-CTL-002**: Control blocks shall implement reset(self) -> Self
 - [x] **REQ-CTL-003**: Control block state shall be immutable (updates return new instances)
+- [ ] **REQ-CTL-004**: Control blocks shall reject non-finite inputs and non-positive or non-finite time steps, and shall report non-finite results, with an error
 
 ### 5.2 PID Controller
 - [x] **REQ-CTL-010**: PID shall support configurable Kp, Ki, Kd gains
@@ -123,6 +127,7 @@ Requirements are tracked with REQ-xxx identifiers for DO-178C DAL-C traceability
 ### 6.3 Framing
 - [x] **REQ-SER-020**: Telemetry frames shall include message type, sequence number, payload length
 - [x] **REQ-SER-021**: System shall provide fixed-size TelemetryBuffer<N> for encoding
+- [ ] **REQ-SER-022**: Encoding into a TelemetryBuffer that is too small shall return BufferOverflow and leave the buffer empty
 
 ## 7. Code Generation Requirements
 
@@ -137,6 +142,9 @@ Requirements are tracked with REQ-xxx identifiers for DO-178C DAL-C traceability
 - [x] **REQ-GEN-011**: Macro shall generate Rust structs, traits, and implementations (test_example_component_struct_with_ports, test_example_port_message_roundtrip, test_example_hook_failure_keeps_component_state in middleware/tests/attitude_controller_model.rs; test_fsm_guard_false_blocks_transition in middleware-codegen/tests/codegen_integration.rs)
 - [x] **REQ-GEN-012**: Macro shall validate YAML against schema and emit compile errors (verified by middleware-codegen/src/validator.rs tests: embedded_schema_compiles, attitude_controller_example_passes, missing_required_field_fails_with_path, missing_nested_required_field_fails_with_path, wrong_type_fails_with_path, unknown_enum_value_fails_with_path, all_violations_are_reported, invalid_yaml_is_reported)
 - [x] **REQ-GEN-013**: Generated code shall include traceability comments and const arrays
+- [ ] **REQ-GEN-014**: The schema shall reject unknown keys in every object
+- [ ] **REQ-GEN-015**: Model paths shall resolve relative to the invoking source file, and the generated code shall rebuild when the model file changes
+- [ ] **REQ-GEN-016**: Generated state machines shall behave identically to the runtime StateMachine on the same transition table (back-to-back)
 
 ## 8. Platform Requirements
 
@@ -152,6 +160,8 @@ Requirements are tracked with REQ-xxx identifiers for DO-178C DAL-C traceability
 ### 8.3 Safety
 - [x] **REQ-PLT-020**: No unsafe code shall be used in the library
 - [x] **REQ-PLT-021**: All state transitions shall be immutable transformations
+- [ ] **REQ-PLT-022**: Every workspace crate shall enforce the coding-guideline lint set (unsafe_code forbidden; unwrap, expect, panic, indexing, float equality and lossy casts denied in non-test code)
+- [ ] **REQ-PLT-023**: Generated code for the example model shall build for thumbv6m-none-eabi without std or alloc
 
 ## Traceability Matrix
 

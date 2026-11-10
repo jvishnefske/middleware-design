@@ -1,0 +1,7 @@
+# trybuild compile-fail fixture: see tests/ui/port_message_type_unknown.rs
+version: "1.0"
+namespace: "t"
+ports:
+  - name: inp
+    direction: input
+    message_type: Missing

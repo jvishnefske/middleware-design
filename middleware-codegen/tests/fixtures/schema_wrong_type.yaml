@@ -1,0 +1,3 @@
+# trybuild compile-fail fixture: see tests/ui/schema_wrong_type.rs
+version: 1
+namespace: "t"

@@ -1,8 +1,23 @@
 [workspace]
-members = ["middleware", "middleware-codegen"]
+members = ["middleware", "middleware-codegen", "xtask", "checks/nostd-gen"]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+
+# ISO 26262-6 Table 1 coding guidelines, enforced by the compiler and clippy.
+# Every member opts in with `lints.workspace = true`. Test modules may relax
+# the panic-family lints with a scoped, justified `cfg_attr(test, allow(..))`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+float_cmp = "deny"
+as_conversions = "deny"
+cast_possible_truncation = "deny"

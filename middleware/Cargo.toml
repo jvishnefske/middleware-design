@@ -15,9 +15,14 @@ middleware-codegen = { path = "../middleware-codegen", optional = true }
 
 [dev-dependencies]
 middleware-codegen = { path = "../middleware-codegen" }
+proptest = "1"
+serde_yaml = "0.9"
 
 [features]
 default = []
 std = ["nalgebra/std", "minicbor/std"]
 codegen = ["middleware-codegen"]
 traceability-runtime = []
+
+[lints]
+workspace = true

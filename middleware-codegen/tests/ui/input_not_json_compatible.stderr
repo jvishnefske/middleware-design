@@ -1,0 +1,5 @@
+error: YAML cannot be checked against the JSON schema: key must be a string
+ --> tests/ui/input_not_json_compatible.rs:1:39
+  |
+1 | middleware_codegen::middleware_model!("../fixtures/input_not_json_compatible.yaml");
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -99,9 +99,12 @@ pub trait ControlBlock {
         Self: Sized;
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::float_cmp))]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::assert_close;
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct Gain {
@@ -131,7 +134,7 @@ mod tests {
     fn test_control_block_update() {
         let gain = Gain { k: 2.5 };
         let (gain, output) = gain.update(4.0, 0.01).unwrap();
-        assert_eq!(output, 10.0);
+        assert_close(output, 10.0);
         assert_eq!(gain.k, 2.5);
     }
 
@@ -206,13 +209,14 @@ mod tests {
     fn test_integrator_block() {
         let integrator = Integrator { state: 0.0 };
         let (integrator, output) = integrator.update(10.0, 0.1).unwrap();
-        assert_eq!(output, 1.0);
+        assert_close(output, 1.0);
 
         let (integrator, output) = integrator.update(10.0, 0.1).unwrap();
-        assert_eq!(output, 2.0);
+        assert_close(output, 2.0);
 
         let integrator = integrator.reset();
+        assert_eq!(integrator.state, 0.0);
         let (_, output) = integrator.update(10.0, 0.1).unwrap();
-        assert_eq!(output, 1.0);
+        assert_close(output, 1.0);
     }
 }

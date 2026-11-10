@@ -70,6 +70,8 @@ mod tests {
 
         assert_eq!(e1, e2);
         assert_ne!(e1, e3);
+        assert_ne!(TestEvent::Reset, TestEvent::Start);
+        assert_ne!(TestEvent::Reset, TestEvent::Stop);
     }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -84,11 +86,14 @@ mod tests {
 
     #[test]
     fn test_event_with_data() {
-        let e1 = DataEvent::Threshold(3.14);
-        let e2 = DataEvent::Threshold(3.14);
-        let e3 = DataEvent::Threshold(2.71);
+        let e1 = DataEvent::Threshold(1.25);
+        let e2 = DataEvent::Threshold(1.25);
+        let e3 = DataEvent::Threshold(2.5);
 
         assert_eq!(e1, e2);
         assert_ne!(e1, e3);
+        assert_eq!(DataEvent::Timeout(100), DataEvent::Timeout(100));
+        assert_ne!(DataEvent::Timeout(100), DataEvent::Timeout(200));
+        assert_ne!(DataEvent::Timeout(3), DataEvent::Threshold(3.0));
     }
 }

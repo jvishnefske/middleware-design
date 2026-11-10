@@ -15,7 +15,19 @@
 //! runtime crate. Component generation is exercised by
 //! `middleware/tests/attitude_controller_model.rs`.
 
+// test code: a panic is a test failure, the intended reporting mechanism
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::indexing_slicing))]
+
 use middleware_codegen::middleware_model_inline;
+
+/// Asserts that `actual` is bit-for-bit the `expected` literal.
+///
+/// The macro emits model constants verbatim, so exact equality is the
+/// property under test; comparing bit patterns states that without a float
+/// `==`.
+fn assert_exact(actual: f32, expected: f32) {
+    assert_eq!(actual.to_bits(), expected.to_bits(), "{} != {}", actual, expected);
+}
 
 // Test basic enum generation
 middleware_model_inline! {
@@ -44,9 +56,11 @@ fn test_enum_generation() {
     let stopped = TestState::Stopped;
 
     // Verify discriminant values
-    assert_eq!(idle as u8, 0);
-    assert_eq!(running as u8, 1);
-    assert_eq!(stopped as u8, 2);
+    const STOPPED: u8 = TestState::Stopped.to_repr();
+    assert_eq!(STOPPED, 2);
+    assert_eq!(u8::from(idle), 0);
+    assert_eq!(u8::from(running), 1);
+    assert_eq!(u8::from(stopped), 2);
 
     // Verify COUNT constant
     assert_eq!(TestState::COUNT, 3);
@@ -87,8 +101,8 @@ fn test_struct_generation() {
         timestamp: 1000,
     };
 
-    assert_eq!(data.temperature, 25.5);
-    assert_eq!(data.pressure, 101.3);
+    assert_exact(data.temperature, 25.5);
+    assert_exact(data.pressure, 101.3);
     assert_eq!(data.timestamp, 1000);
 }
 
@@ -114,11 +128,11 @@ fn test_message_generation() {
 
     let cmd = Command {
         id: 42,
-        value: 3.14,
+        value: 2.5,
     };
 
     assert_eq!(cmd.id, 42);
-    assert!((cmd.value - 3.14).abs() < 0.001);
+    assert_exact(cmd.value, 2.5);
 }
 
 // Test math block generation
@@ -154,20 +168,20 @@ math_blocks:
 #[test]
 fn test_math_block_generation() {
     // Verify PID constants
-    assert_eq!(test_math::PITCH_CONTROLLER::KP, 1.5);
-    assert_eq!(test_math::PITCH_CONTROLLER::KI, 0.1);
-    assert_eq!(test_math::PITCH_CONTROLLER::KD, 0.05);
-    assert_eq!(test_math::PITCH_CONTROLLER::OUTPUT_MIN, -1.0);
-    assert_eq!(test_math::PITCH_CONTROLLER::OUTPUT_MAX, 1.0);
-    assert_eq!(test_math::PITCH_CONTROLLER::INTEGRAL_MAX, 0.5);
+    assert_exact(test_math::PITCH_CONTROLLER::KP, 1.5);
+    assert_exact(test_math::PITCH_CONTROLLER::KI, 0.1);
+    assert_exact(test_math::PITCH_CONTROLLER::KD, 0.05);
+    assert_exact(test_math::PITCH_CONTROLLER::OUTPUT_MIN, -1.0);
+    assert_exact(test_math::PITCH_CONTROLLER::OUTPUT_MAX, 1.0);
+    assert_exact(test_math::PITCH_CONTROLLER::INTEGRAL_MAX, 0.5);
     // integral_min unset: symmetric with integral_max
-    assert_eq!(test_math::PITCH_CONTROLLER::INTEGRAL_MIN, -0.5);
-    assert_eq!(test_math::ASYMMETRIC::INTEGRAL_MIN, -0.2);
-    assert_eq!(test_math::ASYMMETRIC::INTEGRAL_MAX, 0.4);
+    assert_exact(test_math::PITCH_CONTROLLER::INTEGRAL_MIN, -0.5);
+    assert_exact(test_math::ASYMMETRIC::INTEGRAL_MIN, -0.2);
+    assert_exact(test_math::ASYMMETRIC::INTEGRAL_MAX, 0.4);
 
     // Verify filter constants
-    assert_eq!(test_math::SENSOR_FILTER::CUTOFF_HZ, 10.0);
-    assert_eq!(test_math::SENSOR_FILTER::SAMPLE_RATE_HZ, 100.0);
+    assert_exact(test_math::SENSOR_FILTER::CUTOFF_HZ, 10.0);
+    assert_exact(test_math::SENSOR_FILTER::SAMPLE_RATE_HZ, 100.0);
 }
 
 // Test state machine generation
@@ -222,7 +236,7 @@ fn test_state_machine_generation() {
     use test_fsm::Controller;
 
     // Verify initial state
-    assert_eq!(Controller::INITIAL_STATE as u8, State::Idle as u8);
+    assert_eq!(Controller::INITIAL_STATE, State::Idle);
 
     // Verify transition count
     assert_eq!(Controller::TRANSITION_COUNT, 3);
@@ -336,8 +350,8 @@ fn test_complete_model() {
 
     // Test enum
     assert_eq!(Mode::COUNT, 2);
-    assert_eq!(Mode::Off as u8, 0);
-    assert_eq!(Mode::On as u8, 1);
+    assert_eq!(u8::from(Mode::Off), 0);
+    assert_eq!(u8::from(Mode::On), 1);
 
     // Test struct
     let config = Config {
@@ -345,20 +359,20 @@ fn test_complete_model() {
         threshold: 0.5,
     };
     assert!(config.enabled);
-    assert_eq!(config.threshold, 0.5);
+    assert_exact(config.threshold, 0.5);
 
     // Test message
     let status = Status {
-        mode: Mode::On as u8,
+        mode: u8::from(Mode::On),
         value: 42.0,
     };
     assert_eq!(status.mode, 1);
-    assert_eq!(status.value, 42.0);
+    assert_exact(status.value, 42.0);
 
     // Test math block
-    assert_eq!(complete_model::CONTROLLER::KP, 1.0);
-    assert_eq!(complete_model::CONTROLLER::KI, 0.1);
-    assert_eq!(complete_model::CONTROLLER::KD, 0.01);
+    assert_exact(complete_model::CONTROLLER::KP, 1.0);
+    assert_exact(complete_model::CONTROLLER::KI, 0.1);
+    assert_exact(complete_model::CONTROLLER::KD, 0.01);
 
     // Test traceability
     assert_eq!(complete_model::traceability::REQUIREMENT_COUNT, 1);

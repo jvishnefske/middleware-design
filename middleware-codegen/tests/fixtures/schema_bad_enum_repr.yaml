@@ -1,0 +1,8 @@
+# trybuild compile-fail fixture: see tests/ui/schema_bad_enum_repr.rs
+version: "1.0"
+namespace: "t"
+types:
+  enums:
+    - name: S
+      repr: usize
+      variants: [A]

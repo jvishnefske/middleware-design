@@ -7,6 +7,8 @@
 //! - REQ-FSM-001: States represented as enums with repr(u8) or repr(u16)
 //! - REQ-FSM-002: States support on_enter and on_exit actions
 
+use crate::error::LifecycleError;
+
 /// Trait representing a state in a finite state machine.
 ///
 /// States have associated context data and lifecycle hooks for entry and exit actions.
@@ -19,6 +21,7 @@
 /// Basic state implementation:
 /// ```
 /// use middleware::state_machine::State;
+/// use middleware::LifecycleError;
 ///
 /// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// #[repr(u8)]
@@ -35,7 +38,7 @@
 /// impl State for MyState {
 ///     type Context = MyContext;
 ///
-///     fn on_enter(&self, context: &mut Self::Context) -> Result<(), ()> {
+///     fn on_enter(&self, context: &mut Self::Context) -> Result<(), LifecycleError> {
 ///         match self {
 ///             MyState::Idle => {
 ///                 context.reset_count += 1;
@@ -45,7 +48,7 @@
 ///         }
 ///     }
 ///
-///     fn on_exit(&self, _context: &mut Self::Context) -> Result<(), ()> {
+///     fn on_exit(&self, _context: &mut Self::Context) -> Result<(), LifecycleError> {
 ///         Ok(())
 ///     }
 /// }
@@ -66,8 +69,13 @@ pub trait State: Copy + PartialEq {
     /// - `context`: Mutable reference to the state machine context
     ///
     /// # Returns
-    /// `Ok(())` on success, `Err(())` if entry action failed
-    fn on_enter(&self, context: &mut Self::Context) -> Result<(), ()>;
+    /// `Ok(())` on success.
+    ///
+    /// # Errors
+    /// Returns a [`LifecycleError`] (conventionally
+    /// [`LifecycleError::EntryActionFailed`]) if the entry action failed. The
+    /// state machine reports any such error as `FsmError::EntryFailed`.
+    fn on_enter(&self, context: &mut Self::Context) -> Result<(), LifecycleError>;
 
     /// Called when exiting this state.
     ///
@@ -75,10 +83,17 @@ pub trait State: Copy + PartialEq {
     /// - `context`: Mutable reference to the state machine context
     ///
     /// # Returns
-    /// `Ok(())` on success, `Err(())` if exit action failed
-    fn on_exit(&self, context: &mut Self::Context) -> Result<(), ()>;
+    /// `Ok(())` on success.
+    ///
+    /// # Errors
+    /// Returns a [`LifecycleError`] (conventionally
+    /// [`LifecycleError::ExitActionFailed`]) if the exit action failed. The
+    /// state machine reports any such error as `FsmError::ExitFailed`.
+    fn on_exit(&self, context: &mut Self::Context) -> Result<(), LifecycleError>;
 }
 
+// test code: a panic is a test failure, which is the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,12 +114,15 @@ mod tests {
     impl State for TestState {
         type Context = TestContext;
 
-        fn on_enter(&self, context: &mut Self::Context) -> Result<(), ()> {
+        fn on_enter(&self, context: &mut Self::Context) -> Result<(), LifecycleError> {
             context.enter_count += 1;
-            Ok(())
+            match self {
+                TestState::Fault => Err(LifecycleError::EntryActionFailed),
+                TestState::Idle | TestState::Active => Ok(()),
+            }
         }
 
-        fn on_exit(&self, context: &mut Self::Context) -> Result<(), ()> {
+        fn on_exit(&self, context: &mut Self::Context) -> Result<(), LifecycleError> {
             context.exit_count += 1;
             Ok(())
         }
@@ -143,5 +161,19 @@ mod tests {
 
         active.on_enter(&mut context).unwrap();
         assert_eq!(context.enter_count, 2);
+    }
+
+    #[test]
+    fn test_state_entry_failure_reported() {
+        let mut context = TestContext {
+            enter_count: 0,
+            exit_count: 0,
+        };
+
+        assert_eq!(
+            TestState::Fault.on_enter(&mut context),
+            Err(LifecycleError::EntryActionFailed)
+        );
+        assert_eq!(context.enter_count, 1);
     }
 }

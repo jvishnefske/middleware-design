@@ -78,6 +78,8 @@ pub fn pascal_ident(name: &str, what: &str) -> Result<Ident, String> {
 }
 
 #[cfg(test)]
+// test code: a panic is a test failure, the intended reporting mechanism
+#[cfg_attr(test, allow(clippy::unwrap_used))]
 mod tests {
     use super::*;
 

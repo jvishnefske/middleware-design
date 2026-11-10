@@ -1,0 +1,6 @@
+error: model violates schema (1 error):
+         - at `/state_machines/0/transitions/0`: Additional properties are not allowed ('gaurd' was unexpected)
+ --> tests/ui/schema_unknown_key.rs:4:39
+  |
+4 | middleware_codegen::middleware_model!("../fixtures/schema_unknown_key.yaml");
+  |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

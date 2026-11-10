@@ -20,6 +20,9 @@ pub mod telemetry;
 pub mod types;
 pub mod component;
 
+#[cfg(test)]
+mod test_support;
+
 // Re-export key types
 pub use control::{
     ControlBlock, ControlError as ControlBlockError, DiscreteStateSpace, HighPassFilter,
